@@ -1,0 +1,24 @@
+.modal-backdrop {
+  position: fixed;
+  z-index: var(--z-modal-backdrop);
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  background: rgba(4, 8, 15, 0.66);
+  backdrop-filter: blur(7px);
+}
+.modal-dialog {
+  z-index: var(--z-modal);
+  width: min(100%, 35rem);
+  max-height: min(90dvh, 48rem);
+  overflow: auto;
+  padding: var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.36);
+}
+.modal-dialog-wide { width: min(100%, 48rem); }
+.modal-head { display: flex; align-items: start; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-4); }
+.modal-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: var(--space-2); margin-top: var(--space-5); }

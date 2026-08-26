@@ -1,0 +1,6 @@
+import { escapeHtml, titleCase } from "./format.js";
+
+export function renderBlockEditView(block) {
+  if (!block) return '<main class="page-shell"><div class="empty">Block not found.</div></main>';
+  return `<main class="page-shell"><header class="page-head"><div class="page-head-copy"><span class="eyebrow">Edit definition</span><h1>${escapeHtml(block.name)}</h1><p class="muted">This edits the same stable Block ID. It does not create a replacement.</p></div><a class="btn" href="#/blocks/${encodeURIComponent(block.id)}">Open runtime view</a></header><form class="card form-grid" data-edit-block-form data-id="${escapeHtml(block.id)}"><label class="field"><span class="label">Name</span><input class="input" name="name" required maxlength="25" value="${escapeHtml(block.name)}"></label><label class="field"><span class="label">Type</span><input class="input" value="${escapeHtml(titleCase(block.type))}" disabled></label><label class="field field-full"><span class="label">Description</span><textarea class="textarea" name="description">${escapeHtml(block.description || "")}</textarea></label><div class="inline field-full"><button class="btn btn-primary" type="submit">Save changes</button><a class="btn btn-ghost" href="#/blocks/${encodeURIComponent(block.id)}">Cancel</a></div></form></main>`;
+}

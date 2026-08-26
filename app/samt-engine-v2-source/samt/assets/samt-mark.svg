@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">SAMT compass</title>
+  <circle cx="32" cy="32" r="27" fill="none" stroke="currentColor" stroke-width="3"/>
+  <circle cx="32" cy="32" r="15" fill="none" stroke="currentColor" stroke-width="2"/>
+  <path d="M32 5 39 26 59 32 39 38 32 59 25 38 5 32 25 26Z" fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"/>
+  <circle cx="32" cy="32" r="4" fill="currentColor"/>
+</svg>

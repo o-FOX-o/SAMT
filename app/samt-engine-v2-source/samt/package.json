@@ -1,0 +1,16 @@
+{
+  "name": "samt-engine-reference-client",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./js/core.js",
+    "./core": "./js/core.js"
+  },
+  "scripts": {
+    "test": "node --test tests/**/*.test.js",
+    "build": "node scripts/build-standalone.js",
+    "smoke": "node scripts/browser-smoke.js",
+    "check": "node --test tests/**/*.test.js && node scripts/build-standalone.js && node scripts/browser-smoke.js"
+  }
+}
