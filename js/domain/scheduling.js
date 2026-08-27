@@ -6,7 +6,17 @@ export function occurrenceIdentity({ relationshipId, scheduledAt, sequence = 0 }
 export function isScheduleDue({ schedule = {}, at, timezone = "UTC" } = {}) {
   const mode = schedule.mode || "manual"; if (mode === "always_available" || mode === "manual") return mode === "always_available";
   const date = localDate(at, timezone);
-  if (mode === "once") return Boolean(schedule.date || schedule.anchorAt) && String(schedule.date || localDate(schedule.anchorAt, timezone)) === date;
+  if (mode === "once") {
+    const raw = schedule.date || schedule.anchorAt;
+    if (!raw) return false;
+    const expectedDate = /^\d{4}-\d{2}-\d{2}/.test(String(raw)) ? String(raw).slice(0, 10) : localDate(raw, timezone);
+    if (expectedDate !== date) return false;
+    if (!schedule.time && !String(raw).includes("T")) return true;
+    const timeMatch = String(schedule.time || String(raw).match(/T(\d{2}:\d{2})/)?.[1] || "").match(/^(\d{2}):(\d{2})/);
+    if (!timeMatch) return true;
+    const actualParts = partsInTimeZone(at, timezone);
+    return Number(timeMatch[1]) === actualParts.hour && Number(timeMatch[2]) === actualParts.minute;
+  }
   if (mode === "calendar") { if (schedule.startDate && date < schedule.startDate || schedule.endDate && date > schedule.endDate) return false; if (schedule.calendarKind === "daily") return true; if (schedule.calendarKind === "dates") return (schedule.dates || []).includes(date); if (schedule.calendarKind === "weekdays") { const p = partsInTimeZone(at, timezone); return (schedule.weekdays || []).includes(new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay()); } if (schedule.calendarKind === "monthly") return Number(schedule.dayOfMonth) === partsInTimeZone(at, timezone).day; if (schedule.calendarKind === "yearly") { const p = partsInTimeZone(at, timezone); return Number(schedule.month) === p.month && Number(schedule.day) === p.day; } return false; }
   if (mode === "interval") {
     if (!schedule.anchorAt) return false;

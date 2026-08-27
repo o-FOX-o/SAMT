@@ -1,2 +1,3 @@
-export function renderBlockEditView(block = null) { return block ? `<form data-block-edit="${escapeText(block.id)}"><h1>Edit ${escapeText(block.name)}</h1><label>Name<input name="name" value="${escapeText(block.name)}"></label><button type="submit">Save</button></form>` : "<p>Block not found.</p>"; }
-const escapeText = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+// Compatibility entry point: the full V3 Block definition editor lives in
+// blocks-view.js and is routed through /blocks/:id/edit.
+export { renderBlockEditView } from "./blocks-view.js";

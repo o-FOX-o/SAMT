@@ -91,12 +91,17 @@ export function reconcileTemporalState({ repository, now = new Date(), timezone 
     for (const block of state.blocks || []) {
       if (block.definitionStatus !== "ACTIVE") continue;
       for (const relationship of block.relationships || []) {
+        // Occurrences are generated for contextual Action relationships only;
+        // a scheduled Block relationship is a dependency/navigation edge, not
+        // an Action occurrence.
+        if (relationship.kind !== "action" || !["action_list", "routine", "workflow", "project", "cycle"].includes(block.type)) continue;
         const schedule = relationship.config?.schedule; const existing = state.occurrences || []; const candidate = scheduleCandidate({ schedule, relationshipId: relationship.id, existing, now: current, timezone }); if (!candidate) continue;
         try { validateActionListSchedule(schedule); } catch { continue; }
         if (!shouldGenerateScheduledOccurrence({ schedule, existingOccurrences: existing, relationshipId: relationship.id, now: current })) continue;
         const identity = occurrenceIdentity({ relationshipId: relationship.id, scheduledAt: candidate.scheduledAt, sequence: candidate.sequence });
         if (existing.some((occurrence) => occurrence.identity === identity)) continue;
         const defaultDeadline = schedule.dateOnly === false ? null : calculatePeriodBounds({ period: "day", at: current, timezone }).end;
+        if (schedule.overlap === "replace_previous") for (const previous of existing.filter((item) => item.relationshipId === relationship.id && !["completed", "skipped", "missed", "expired", "excused", "not_applicable"].includes(item.status))) { previous.status = "expired"; previous.replacedAt = current.toISOString(); previous.updatedAt = current.toISOString(); historyEvents.push({ type: "OCCURRENCE_REPLACED", description: `Replaced occurrence ${previous.id}`, objectType: "occurrence", objectId: previous.id }); }
         const occurrence = createOccurrence({ id: identity.replace(/[^A-Za-z0-9_-]/g, "_"), relationshipId: relationship.id, scheduledAt: candidate.scheduledAt, availableFrom: schedule.availableFrom || null, deadline: schedule.deadline || defaultDeadline, status: schedule.mode === "always_available" ? "available" : "due", snapshot: { identity, actionId: relationship.refId, schedule: clone(schedule), unfinishedPolicy: relationship.config?.unfinishedPolicy || "expire" }, now: current }); occurrence.identity = identity; state.occurrences.push(occurrence); created.push(occurrence.id); historyEvents.push({ type: "OCCURRENCE_CREATED", description: `Created occurrence for ${relationship.id}`, objectType: "occurrence", objectId: occurrence.id });
       }
     }

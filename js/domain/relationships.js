@@ -6,7 +6,8 @@ export const RELATIONSHIP_KINDS = ["action", "block"];
 
 export function createRelationship({ id = null, parentBlockId, kind, refId, label = null, position = 0, config = {}, now = new Date() } = {}) {
   if (!parentBlockId || !RELATIONSHIP_KINDS.includes(kind) || !refId) throw new ValidationError("Relationship requires a parent, kind and reference.");
-  return { id: id || createId("relationship", now), parentBlockId, kind, refId, label: label == null ? null : String(label), position: Math.max(0, Number(position) || 0), config: clone(config) || {}, createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString() };
+  const contextual = { required: false, allowSkip: false, requireSkipReason: false, includeInTarget: true, ...clone(config) };
+  return { id: id || createId("relationship", now), parentBlockId, kind, refId, label: label == null ? null : String(label), position: Math.max(0, Number(position) || 0), config: contextual, createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString() };
 }
 
 export function validateRelationship(relationship) {
@@ -29,6 +30,7 @@ export function validateBlockGraph({ blocks = [], actions = [] } = {}) {
       const contextualLabel = relationship.label || relationship.config?.contextualLabel;
       if (contextualLabel) { const labelKey = `${key}:${String(contextualLabel).trim().toLocaleLowerCase()}`; if (contextualLabels.has(labelKey)) throw new ConflictError(`Duplicate contextual relationship: ${labelKey}`); contextualLabels.add(labelKey); }
       if (keys.has(key)) {
+        if (relationship.kind === "block") throw new ConflictError(`A Block may appear only once directly in ${block.id}: ${relationship.refId}`);
         const contextual = relationship.label || relationship.config?.contextualLabel || relationship.config?.allowDuplicate;
         const alreadyContextual = [...(block.relationships || [])].some((candidate) => candidate !== relationship && candidate.kind === relationship.kind && candidate.refId === relationship.refId && (candidate.label || candidate.config?.contextualLabel || candidate.config?.allowDuplicate));
         if (!contextual || !alreadyContextual) throw new ConflictError(`Duplicate direct relationship: ${key}`);

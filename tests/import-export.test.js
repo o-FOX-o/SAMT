@@ -12,3 +12,11 @@ test("V3 export/import round trip is semantic and import failure is non-mutating
   assert.throws(() => importPackage({ package: "SAMT", schemaVersion: "3.0.0", state: { schemaVersion: "3.0.0" } }, { existingState: state }));
   assert.equal(backup.package, "SAMT");
 });
+
+test("schema-v2 raw exports import through the deterministic migration", () => {
+  const legacy = { schemaVersion: "2.0.0", categories: [], actions: [{ id: "old_action", name: "Read", polarity: "positive" }], blocks: [], cycles: [], projects: [], actionTasks: [], quickTasks: [], reviews: [], actionLogs: [], history: [] };
+  const result = importPackage(legacy, { existingState: createEmptyState(new Date("2026-01-01T00:00:00Z")), now: new Date("2026-01-01T01:00:00Z") });
+  assert.equal(result.state.schemaVersion, "3.0.0");
+  assert.equal(result.state.actions[0].id, "old_action");
+  assert.equal(result.state.meta.migratedFrom, "2.0.0");
+});

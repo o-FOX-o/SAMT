@@ -72,6 +72,7 @@ function validateSingleValue(field, value, units) {
   if (config.mode === "multiple" && !Array.isArray(value)) throw new ValidationError(`${field.label} requires multiple selections.`);
   if ((!selected.length || selected.every((entry) => entry == null || entry === "")) && config.minSelections > 0) throw new ValidationError(`${field.label} requires a selection.`);
   if (config.maxSelections != null && selected.length > config.maxSelections) throw new ValidationError(`${field.label} has too many selections.`);
+  if (new Set(selected).size !== selected.length) throw new ValidationError(`${field.label} contains a duplicate choice.`);
   const ids = new Set(config.options.map((option) => option.id)); if (selected.some((id) => !ids.has(id))) throw new ValidationError(`${field.label} contains an invalid choice.`);
 }
 
@@ -95,7 +96,7 @@ export function analyzeResultValues({ field, values = [], units = [], operation 
     const scores = all.map((id) => optionFor(id)?.analysisScore).filter((score) => score != null);
     const ordinalAverage = config.orderMatters && ranks.length ? ranks.reduce((sum, value) => sum + value, 0) / ranks.length : null;
     const medianRank = config.orderMatters && ranks.length ? ranks.length % 2 ? ranks[(ranks.length - 1) / 2] : (ranks[ranks.length / 2 - 1] + ranks[ranks.length / 2]) / 2 : null;
-    const latest = rows.at(-1); const selected = operation === "latest" || !operation ? latest : operation === "highest" ? (config.orderMatters ? rows.slice().sort((a, b) => choiceAnalyticalValue(field, b) - choiceAnalyticalValue(field, a))[0] : latest) : operation === "lowest" ? (config.orderMatters ? rows.slice().sort((a, b) => choiceAnalyticalValue(field, a) - choiceAnalyticalValue(field, b))[0] : latest) : latest;
+    const latest = rows.at(-1); const canRank = config.orderMatters && config.betterDirection !== "none"; const selected = operation === "latest" || !operation ? latest : operation === "highest" ? (canRank ? rows.slice().sort((a, b) => choiceAnalyticalValue(field, b) - choiceAnalyticalValue(field, a))[0] : latest) : operation === "lowest" ? (canRank ? rows.slice().sort((a, b) => choiceAnalyticalValue(field, a) - choiceAnalyticalValue(field, b))[0] : latest) : latest;
     return { count: rows.length, value: selected, frequencies, percentage: all.length ? Object.fromEntries(Object.entries(frequencies).map(([key, count]) => [key, count / all.length * 100])) : {}, ordinalAverage, medianRank, numericAverage: scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : null };
   }
   const numeric = field.type === "measurement" ? rows.map((entry) => {
@@ -116,12 +117,12 @@ export function choiceRank(field, optionId) {
 
 export function choiceAnalyticalValue(field, optionId) {
   const config = normalizeResultConfig(field); const option = config.options.find((candidate) => candidate.id === optionId);
-  if (!option || !config.orderMatters) return null;
+  if (!option || !config.orderMatters || config.betterDirection === "none") return null;
   return config.betterDirection === "lower" ? -option.position : option.position;
 }
 
 export function compareChoice(field, leftOptionId, rightOptionId) {
-  const config = normalizeResultConfig(field); if (!config.orderMatters) return null;
+  const config = normalizeResultConfig(field); if (!config.orderMatters || config.betterDirection === "none") return null;
   const left = choiceRank(field, leftOptionId); const right = choiceRank(field, rightOptionId); if (left == null || right == null) return null;
   const direction = config.betterDirection === "lower" ? -1 : 1;
   return (left - right) * direction;

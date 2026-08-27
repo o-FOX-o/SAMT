@@ -11,12 +11,13 @@ export function createEmptyState(now = new Date()) {
     schemaVersion: STORAGE_SCHEMA_VERSION,
     createdAt: stamp,
     updatedAt: stamp,
-    categories: [], tags: [], units: clone(BUILTIN_UNITS), actions: [], blocks: [],
+    categories: [], tags: [], units: clone(BUILTIN_UNITS), actions: [], blocks: [], tasks: [], quickTasks: [], reviews: [],
     activations: [], runs: [], occurrences: [], periods: [], actionLogs: [],
     targetEvaluations: [], cycleSmallCycles: [], cycleBigCycles: [],
     scopeChangeEvents: [], lifecycleEvents: [], history: [],
     settings: {
       timezone: "Europe/London", weekStartsOn: 1, primaryProjectId: null,
+      capacity: { availableMinutes: 0, periodDays: 7, updatedAt: stamp },
       defaults: {
         targetAutoClose: true, cycleAutoClose: true,
         cyclePositionPolicy: "continue", cycleMissedItemPolicy: "keep_position",
@@ -39,7 +40,12 @@ export function migrateV2State(oldState, { now = new Date() } = {}) {
   const defaultCategory = state.categories[0] || { id: "migrated_category_general", name: "General", description: "Migrated default", scope: "both", status: "active", createdAt: stamp, updatedAt: stamp };
   if (!categoryIds.has(defaultCategory.id)) state.categories.push(defaultCategory);
   state.tags = state.categories.map((category) => ({ id: `tag_${category.id}`, categoryId: category.id, name: category.name, description: "Migrated category label", scope: "both", status: category.status, createdAt: category.createdAt, updatedAt: category.updatedAt }));
-  state.actions = (oldState?.actions || []).map((action, index) => ({ id: migrationId("action", action, index), name: action.name || action.title || "Unnamed Action", description: action.description || "", tagIds: Array.isArray(action.tagIds) ? [...action.tagIds] : (action.categoryId ? [`tag_${action.categoryId}`] : []), direction: action.direction || (action.polarity === "negative" ? "avoid" : "do"), completion: action.completion || { method: "time", minimumMinutes: 0 }, resultFields: Array.isArray(action.resultFields) ? clone(action.resultFields) : migrateLegacyResult(action, index), status: action.status === "archived" ? "archived" : "active", createdAt: action.createdAt || stamp, updatedAt: action.updatedAt || stamp, legacy: { ...(clone(action.legacy) || {}), categoryId: action.categoryId || null, original: clone(action) } }));
+  state.actions = (oldState?.actions || []).map((action, index) => {
+    const direction = action.direction || (action.polarity === "negative" ? "avoid" : "do");
+    const legacyRecurrence = action.recurrence || null;
+    const inferredAvoid = direction === "avoid" && legacyRecurrence ? { mode: "binary_limit", metric: "time", allowed: 0, period: legacyRecurrence.intervalDays === 7 ? "week" : "day", periodStyle: "calendar", legacyRecurrence: clone(legacyRecurrence) } : null;
+    return { id: migrationId("action", action, index), name: action.name || action.title || "Unnamed Action", description: action.description || "", tagIds: Array.isArray(action.tagIds) ? [...action.tagIds] : (action.categoryId ? [`tag_${action.categoryId}`] : []), direction, completion: action.completion || { method: "time", minimumMinutes: 0 }, resultFields: Array.isArray(action.resultFields) ? clone(action.resultFields) : migrateLegacyResult(action, index), avoid: clone(action.avoid || inferredAvoid), status: action.status === "archived" ? "archived" : "active", createdAt: action.createdAt || stamp, updatedAt: action.updatedAt || stamp, legacy: { ...(clone(action.legacy) || {}), categoryId: action.categoryId || null, original: clone(action) } };
+  });
   for (const action of state.actions) if (action.legacy?.categoryId && !state.categories.some((category) => category.id === action.legacy.categoryId)) action.legacy = { ...action.legacy, categoryMissing: true };
   const actionById = new Map(state.actions.map((action) => [action.id, action]));
   const actionByName = new Map(state.actions.map((action) => [String(action.name).toLocaleLowerCase(), action]));
@@ -61,6 +67,10 @@ export function migrateV2State(oldState, { now = new Date() } = {}) {
   }
   state.actionLogs = (oldState?.actionLogs || []).map((log, index) => ({ ...clone(log), id: log.id || `migrated_log_${index + 1}`, actionId: log.actionId || log.action?.id, eventAt: log.eventAt || log.timestamp || stamp, durationMinutes: Math.max(0, Number(log.durationMinutes) || 0), quantity: log.quantity == null ? null : Math.max(0, Number(log.quantity) || 0), resultValues: clone(log.resultValues || []), actionSnapshot: clone(log.actionSnapshot || (state.actions.find((action) => action.id === (log.actionId || log.action?.id)) ? { id: log.actionId || log.action?.id, name: state.actions.find((action) => action.id === (log.actionId || log.action?.id)).name } : null)), legacy: { ...(clone(log.legacy) || {}), original: clone(log) } }));
   state.history = (oldState?.history || []).map((event, index) => ({ ...clone(event), id: event.id || `migrated_history_${index + 1}`, timestamp: event.timestamp || event.eventDateTime || stamp, type: event.type || "legacy", description: event.description || "Migrated History event", metadata: { ...(clone(event.metadata) || {}), migratedFrom: "2.x" }, sequence: index + 1 }));
+  state.tasks = (oldState?.actionTasks || []).map((task, index) => ({ ...clone(task), id: task.id || `migrated_task_${index + 1}`, actionId: task.actionId || null, status: task.status || "active" }));
+  state.quickTasks = clone(oldState?.quickTasks || []);
+  state.reviews = clone(oldState?.reviews || []);
+  state.settings.capacity = clone(oldState?.settings?.capacity || state.settings.capacity);
   state.legacy = { sourceSchemaVersion: oldState?.schemaVersion || "2.x", sourceState: clone(oldState), runtime: { actionTasks: clone(oldState?.actionTasks || []), quickTasks: clone(oldState?.quickTasks || []), reviews: clone(oldState?.reviews || []), settings: clone(oldState?.settings || {}) } };
   state.updatedAt = stamp; return state;
 }
@@ -72,4 +82,13 @@ function migrateLegacyResult(action, index = 0) {
   return [{ id: source.id || `migrated_result_${index + 1}`, definitionVersion: 1, type, label: source.label || source.question || "Result", helpText: source.helpText || "", required: Boolean(source.required), position: 0, resultTagId: source.resultTagId || null, showInSummary: source.showInSummary !== false, includeInAnalysis: source.includeInAnalysis !== false, config: clone(source.config || {}) }];
 }
 
-export function normalizeState(value, options = {}) { return isV3State(value) ? clone(value) : migrateV2State(value, options); }
+export function normalizeState(value, options = {}) {
+  if (!isV3State(value)) return migrateV2State(value, options);
+  const state = clone(value); const empty = createEmptyState(options.now || new Date());
+  for (const key of ["categories", "tags", "units", "actions", "blocks", "tasks", "quickTasks", "reviews", "activations", "runs", "occurrences", "periods", "actionLogs", "targetEvaluations", "cycleSmallCycles", "cycleBigCycles", "scopeChangeEvents", "lifecycleEvents", "history"]) if (!Array.isArray(state[key])) state[key] = clone(empty[key]);
+  state.settings = { ...empty.settings, ...(state.settings || {}), defaults: { ...empty.settings.defaults, ...(state.settings?.defaults || {}) }, capacity: { ...empty.settings.capacity, ...(state.settings?.capacity || {}) } };
+  if ((!state.tasks.length && state.legacy?.runtime?.actionTasks?.length)) state.tasks = clone(state.legacy.runtime.actionTasks);
+  if ((!state.quickTasks.length && state.legacy?.runtime?.quickTasks?.length)) state.quickTasks = clone(state.legacy.runtime.quickTasks);
+  if ((!state.reviews.length && state.legacy?.runtime?.reviews?.length)) state.reviews = clone(state.legacy.runtime.reviews);
+  return state;
+}

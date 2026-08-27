@@ -1,9 +1,10 @@
 # SAMT architecture
 
-SAMT keeps the working Version 2 reference client and adds a replaceable V3
-engine beside it. `index.html` remains a single portable shell; it boots the
-embedded client first, then loads `js/main.js` when served from a folder. If
-the module bridge is unavailable, the Version 2 client still works.
+SAMT V3 is the primary application on the repository root. `index.html` is a
+small shell that loads the modular V3 client from `js/main.js`; it contains no
+embedded business engine or duplicate screen application. The former Version
+2 client is retained only as `life-command-tracker-v2-standalone.html` so old
+records can still be opened/exported during migration and recovery.
 
 ## Layers
 
@@ -16,9 +17,10 @@ the module bridge is unavailable, the Version 2 client still works.
 - **Infrastructure** (`js/infrastructure`) implements repository, local
   storage, IndexedDB boundary, backup and testable clocks. Browser storage is
   optional; the repository remains usable in memory when it is blocked.
-- **UI** (`js/ui` plus the embedded reference client) renders state and sends
-  commands. The V3 panel is a small progressive-disclosure engine inspector,
-  not a second application.
+- **UI** (`js/ui`) renders V3 view models and sends commands. It contains
+  progressive-disclosure editors for the seven Block types, Actions/Results,
+  taxonomy, Units, scheduling and runtime records, but it does not implement
+  SAMT formulas.
 
 The direction is UI → application → domain. Infrastructure is injected at the
 application boundary. A future Next.js, desktop or mobile client can import
@@ -41,15 +43,15 @@ recalculate business rules in the DOM.
 
 ## Storage and migration
 
-The reference client retains the existing V2 key
-`life-command-progress-tracker-v2`. The V3 adapter reads a V3 key first and
-otherwise normalises V2/V1 data into a separate V3 state while preserving
-stable IDs, logs, snapshots and the complete source state in `legacy`. Before
-the first V3 write it stores the exact source payload in a restore-point key,
-validates the migrated state, then commits the V3 copy. The source V2/V1 key is
-never overwritten. A blocked or unavailable storage implementation never
-prevents startup; it simply keeps the current state in memory. Imports return a
-restore point and are validated before replacement.
+The V3 adapter reads the V3 key first and otherwise normalises the existing
+V2/V1 keys into a separate V3 state while preserving stable IDs, logs,
+snapshots and the complete source state in `legacy`. Before the first V3 write
+it stores the exact source payload in a restore-point key, validates the
+migrated state, then commits the V3 copy. The source V2/V1 key is never
+overwritten. A blocked or unavailable storage implementation never prevents
+startup; it simply keeps the current state in memory. Imports return a restore
+point and are validated before replacement. A clean install creates a valid
+empty state and never waits for JSON.
 
 ## Time
 

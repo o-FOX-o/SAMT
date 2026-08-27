@@ -14,7 +14,19 @@ export function resolveWorkflowCompletion({ steps = [] } = {}) {
 
 export function returnToWorkflowStep({ steps = [], stepId, now = new Date() } = {}) {
   const index = steps.findIndex((step) => step.id === stepId); if (index < 0) throw new ValidationError("Workflow step does not exist.");
-  return steps.map((step, current) => current >= index && !["COMPLETED", "EXCUSED", "NOT_APPLICABLE"].includes(step.state) ? { ...step, state: current === index ? "AVAILABLE" : "LOCKED", reopenedAt: current === index ? new Date().toISOString() : step.reopenedAt || null } : step);
+  const reopenedAt = new Date(now).toISOString();
+  return steps.map((step, current) => {
+    if (current < index) return step;
+    // Returning is an explicit runtime transition. Downstream steps are
+    // reopened/locked even when they were previously completed; their old
+    // factual completion remains in the Run history and is never deleted.
+    return {
+      ...step,
+      state: current === index ? "AVAILABLE" : "LOCKED",
+      reopenedAt,
+      reopenedFromState: step.state
+    };
+  });
 }
 
 export function createWorkflowStep({ id, relationshipId = null, name = "", required = true, state = "LOCKED", position = 0, timing = null } = {}) {

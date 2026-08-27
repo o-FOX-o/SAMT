@@ -8,6 +8,7 @@ import { createBrowserRepository, V3_BACKUP_KEY } from "../js/infrastructure/loc
 import { createAction } from "../js/domain/actions.js";
 import { createBlock } from "../js/domain/blocks.js";
 import { createRelationship } from "../js/domain/relationships.js";
+import { returnToWorkflowStep } from "../js/domain/workflows.js";
 
 test("commands use one transaction and snapshots while Home/Analysis stay queries", () => {
   const clock = fakeClock(new Date("2026-01-01T10:00:00Z"), "UTC");
@@ -64,4 +65,12 @@ test("temporal reconciliation is idempotent and expires a daily occurrence at lo
   assert.equal(engine.reconcile({ now: clock.now(), timezone: "UTC" }).created.length, 0);
   clock.set("2026-01-02T10:00:00Z"); const next = engine.reconcile({ now: clock.now(), timezone: "UTC" });
   assert.equal(next.created.length, 1); assert.equal(repository.getState().occurrences.filter((item) => item.status === "missed").length, 1);
+});
+
+test("returning to a Workflow step reopens downstream steps without deleting history", () => {
+  const steps = [{ id: "a", state: "COMPLETED" }, { id: "b", state: "COMPLETED" }, { id: "c", state: "COMPLETED" }];
+  const returned = returnToWorkflowStep({ steps, stepId: "b", now: new Date("2026-01-03T00:00:00Z") });
+  assert.deepEqual(returned.map((step) => step.state), ["COMPLETED", "AVAILABLE", "LOCKED"]);
+  assert.equal(returned[2].reopenedFromState, "COMPLETED");
+  assert.equal(steps[2].state, "COMPLETED");
 });

@@ -23,6 +23,7 @@
         "units": { "type": "array", "items": { "$ref": "#/$defs/unit" } },
         "actions": { "type": "array", "items": { "$ref": "#/$defs/action" } },
         "blocks": { "type": "array", "items": { "$ref": "#/$defs/block" } },
+        "tasks": { "type": "array" }, "quickTasks": { "type": "array" }, "reviews": { "type": "array" },
         "activations": { "type": "array" }, "runs": { "type": "array" }, "occurrences": { "type": "array" }, "periods": { "type": "array" },
         "actionLogs": { "type": "array", "items": { "$ref": "#/$defs/log" } }, "history": { "type": "array" }
       }

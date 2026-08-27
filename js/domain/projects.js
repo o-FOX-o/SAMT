@@ -14,7 +14,7 @@ export function evaluateProjectCondition(condition, context = {}) {
     const actual = context.results?.[condition.fieldId]; const field = context.resultFields?.[condition.fieldId];
     if (actual == null) return false;
     if (field?.type === "choice") {
-      if (!field.config?.orderMatters && condition.operator !== "=") return false;
+      if ((!field.config?.orderMatters || field.config?.betterDirection === "none") && condition.operator !== "=") return false;
       const left = condition.operator === "=" ? actual : choiceRank(field, actual); const right = condition.operator === "=" ? condition.value : choiceRank(field, condition.value); return left != null && right != null && compareValues(left, condition.operator || ">=", right);
     }
     if (field?.type === "measurement" && actual && typeof actual === "object") {

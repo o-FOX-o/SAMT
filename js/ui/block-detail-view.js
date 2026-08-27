@@ -1,2 +1,3 @@
-export function renderBlockDetailView(block = null) { return block ? `<section><h1>${escapeText(block.name)}</h1><p>${escapeText(block.description)}</p><a data-route="/blocks/${encodeURIComponent(block.id)}/edit">Edit definition</a></section>` : "<p>Block not found.</p>"; }
-const escapeText = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+// Compatibility entry point: the full V3 Block detail renderer lives in
+// blocks-view.js so Open and Edit share one coherent application surface.
+export { renderBlockDetailView } from "./blocks-view.js";
