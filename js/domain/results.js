@@ -103,7 +103,8 @@ export function analyzeResultValues({ field, values = [], units = [], operation 
   }) : rows.map(Number);
   if (field.type === "measurement" && operation === "total") return { count: rows.length, value: numeric.reduce((sum, value) => sum + value, 0) };
   const valuesSorted = [...numeric].sort((a, b) => a - b); const latest = numeric.at(-1); const average = numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
-  return { count: numeric.length, value: operation === "latest" ? latest : operation === "min" ? valuesSorted[0] : operation === "max" ? valuesSorted.at(-1) : average, latest, min: valuesSorted[0], max: valuesSorted.at(-1), average, change: latest - numeric[0] };
+  const value = operation === "latest" ? latest : ["min", "lowest"].includes(operation) ? valuesSorted[0] : ["max", "highest"].includes(operation) ? valuesSorted.at(-1) : operation === "total" ? numeric.reduce((sum, entry) => sum + entry, 0) : average;
+  return { count: numeric.length, value, latest, min: valuesSorted[0], max: valuesSorted.at(-1), average, total: numeric.reduce((sum, entry) => sum + entry, 0), change: latest - numeric[0] };
 }
 
 export function normalizeForTextAnalysis(value) { return String(value ?? "").trim().toLocaleLowerCase(); }

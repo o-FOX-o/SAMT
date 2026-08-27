@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createAction } from "../js/domain/actions.js";
 import { createActionLog } from "../js/domain/logs.js";
-import { createResultField, validateResultFields, validateResultValues } from "../js/domain/results.js";
+import { createResultField, validateResultFields, validateResultValues, analyzeResultValues } from "../js/domain/results.js";
 import { createBlock } from "../js/domain/blocks.js";
 import { createRelationship, validateBlockGraph } from "../js/domain/relationships.js";
 import { createTargetConfig, calculateTargetProgress } from "../js/domain/targets.js";
@@ -42,4 +42,11 @@ test("cycle config fields normalize frequency and retain deterministic snapshots
   const cycle = generateSmallCycle({ relationships: [{ id: "a", config: { appearanceMode: "fixed", frequency: 2 } }, { id: "b", config: { appearanceMode: "fixed", frequency: 1 } }], now });
   assert.deepEqual(cycle.slots.map((slot) => slot.relationshipId), ["a", "b", "a"]);
   assert.equal(cycle.relationshipSnapshot.a.fixedCount, 2);
+});
+
+test("numeric Result analysis honours Highest and Lowest operations", () => {
+  const field = createResultField({ id: "result_weight", type: "measurement", label: "Weight", config: { defaultUnitId: "unit_kg" }, now });
+  const values = [{ value: 70, unitId: "unit_kg" }, { value: 72, unitId: "unit_kg" }, { value: 71, unitId: "unit_kg" }];
+  assert.equal(analyzeResultValues({ field, values, units: BUILTIN_UNITS, operation: "highest" }).value, 72);
+  assert.equal(analyzeResultValues({ field, values, units: BUILTIN_UNITS, operation: "lowest" }).value, 70);
 });
