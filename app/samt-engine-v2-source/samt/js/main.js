@@ -50,7 +50,7 @@ function renderRoute() {
     else if (route.name === "history") content = renderHistoryView(engine.queries.getState().history);
     else if (route.name === "settings") content = renderSettingsView(engine.queries.getState());
     else content = '<main class="page-shell"><div class="empty"><h1>Page not found</h1><a class="btn" href="#/">Return Home</a></div></main>';
-    appRoot.innerHTML = renderShell(route, content);
+    appRoot.innerHTML = renderShell(route, content, { storageStatus: repository.getStatus() });
     document.querySelector("[data-edit-block-form]")?.addEventListener("submit", saveBlockForm);
   } catch (error) { showError(error); }
 }

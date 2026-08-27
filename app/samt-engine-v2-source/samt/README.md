@@ -8,7 +8,13 @@ the external SAMT package schema at version 2.
 ## Use the app
 
 Open `dist/samt-app.html` directly in a modern browser. It has no server or
-account requirement. A fresh browser origin starts empty.
+account, JSON import, or starter-data requirement. A fresh browser origin
+starts with a usable empty Home screen and first-Action/first-Block controls.
+
+If a local-file or Android browser blocks both IndexedDB and local storage,
+SAMT continues in temporary session mode instead of failing to start. The UI
+shows a notice because changes in that mode must be exported before the page
+is closed.
 
 The modular development client uses ES modules. Serve this folder through any
 static file server and open `index.html` when working on source files.

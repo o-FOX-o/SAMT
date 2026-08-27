@@ -4,6 +4,13 @@ function focusable(container) {
   return [...container.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"]')].filter((element) => !element.hidden);
 }
 
+export function modalMarkup({ title, body, submitLabel = null, cancelLabel = "Cancel", destructive = false, dismissible = true, wide = false }) {
+  const headerClose = dismissible && submitLabel
+    ? '<button type="button" class="btn btn-ghost btn-small" data-modal-close aria-label="Close dialog">Close</button>'
+    : "";
+  return `<section class="modal-dialog ${wide ? "modal-dialog-wide" : ""}" role="dialog" aria-modal="true" aria-labelledby="global-modal-title" tabindex="-1"><form data-modal-form><div class="modal-head"><div><h2 id="global-modal-title">${escapeHtml(title)}</h2></div>${headerClose}</div><div class="stack" data-modal-body>${body}</div><div class="modal-actions"><button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(cancelLabel)}</button>${submitLabel ? `<button type="submit" class="btn ${destructive ? "btn-danger" : "btn-primary"}">${escapeHtml(submitLabel)}</button>` : ""}</div></form></section>`;
+}
+
 export class ModalManager {
   constructor(root) { this.root = root; this.active = null; this.opener = null; this.keyHandler = null; }
 
@@ -27,7 +34,7 @@ export class ModalManager {
     return new Promise((resolve) => {
       const backdrop = document.createElement("div");
       backdrop.className = "modal-backdrop";
-      backdrop.innerHTML = `<section class="modal-dialog ${wide ? "modal-dialog-wide" : ""}" role="dialog" aria-modal="true" aria-labelledby="global-modal-title"><form data-modal-form><div class="modal-head"><div><h2 id="global-modal-title">${escapeHtml(title)}</h2></div>${dismissible ? '<button type="button" class="btn btn-ghost btn-small" data-modal-close aria-label="Close dialog">Close</button>' : ""}</div><div class="stack" data-modal-body>${body}</div><div class="modal-actions"><button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(cancelLabel)}</button>${submitLabel ? `<button type="submit" class="btn ${destructive ? "btn-danger" : "btn-primary"}">${escapeHtml(submitLabel)}</button>` : ""}</div></form></section>`;
+      backdrop.innerHTML = modalMarkup({ title, body, submitLabel, cancelLabel, destructive, dismissible, wide });
       this.root.replaceChildren(backdrop);
       this.active = { resolve, backdrop };
       backdrop.addEventListener("click", (event) => {
