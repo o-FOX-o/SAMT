@@ -20,3 +20,13 @@ test("schema-v2 raw exports import through the deterministic migration", () => {
   assert.equal(result.state.actions[0].id, "old_action");
   assert.equal(result.state.meta.migratedFrom, "2.0.0");
 });
+
+test("life-command schema-v2 backup envelopes remain importable", () => {
+  const legacyPackage = {
+    format: "life-command", schemaVersion: 2, packageId: "legacy_backup", packageType: "backup", exportedAt: "2026-01-01T01:00:00.000Z", rootObjectIds: [],
+    data: { categories: [], tags: [], units: [], actions: [{ id: "envelope_action", name: "Journal", direction: "do", completion: { method: "time", minimumMinutes: 0 }, result: { mode: "none" } }], blocks: [], actionLogs: [], history: [] }
+  };
+  const result = importPackage(legacyPackage, { existingState: createEmptyState(new Date("2026-01-01T02:00:00Z")), now: new Date("2026-01-01T02:00:00Z") });
+  assert.equal(result.state.actions[0].id, "envelope_action");
+  assert.equal(result.state.legacy.sourcePackage.packageType, "backup");
+});

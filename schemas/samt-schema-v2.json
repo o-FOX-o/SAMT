@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://samt.local/schemas/samt-schema-v2.json",
+  "title": "SAMT Package Schema v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "schemaVersion", "packageId", "packageType", "exportedAt", "rootObjectIds", "data"],
+  "properties": {
+    "format": { "const": "life-command" },
+    "schemaVersion": { "const": 2 },
+    "packageId": { "type": "string", "minLength": 1 },
+    "packageType": { "enum": ["action-package", "block-package", "style-package", "backup"] },
+    "exportedAt": { "type": "string", "format": "date-time" },
+    "rootObjectIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "data": {
+      "type": "object",
+      "properties": {
+        "categories": { "$ref": "#/$defs/records" }, "tags": { "$ref": "#/$defs/records" }, "units": { "$ref": "#/$defs/records" },
+        "actions": { "$ref": "#/$defs/actions" }, "blocks": { "$ref": "#/$defs/blocks" }, "activationPresets": { "$ref": "#/$defs/records" },
+        "activations": { "$ref": "#/$defs/records" }, "runs": { "$ref": "#/$defs/records" }, "occurrences": { "$ref": "#/$defs/records" },
+        "actionLogs": { "$ref": "#/$defs/records" }, "history": { "$ref": "#/$defs/records" }, "analysisTargets": { "$ref": "#/$defs/records" },
+        "targetPeriods": { "$ref": "#/$defs/records" }, "avoidPeriods": { "$ref": "#/$defs/records" }, "cyclePeriods": { "$ref": "#/$defs/records" },
+        "periodEvaluations": { "$ref": "#/$defs/records" }, "styles": { "$ref": "#/$defs/records" }, "restorePoints": { "$ref": "#/$defs/records" },
+        "importHistory": { "$ref": "#/$defs/records" }, "bin": { "$ref": "#/$defs/records" }, "settings": { "type": "object" },
+        "meta": { "type": "object" }, "internalStorageVersion": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": true
+    }
+  },
+  "$defs": {
+    "record": { "type": "object", "required": ["id"], "properties": { "id": { "type": "string", "minLength": 1 } }, "additionalProperties": true },
+    "records": { "type": "array", "items": { "$ref": "#/$defs/record" } },
+    "actions": { "type": "array", "items": { "allOf": [{ "$ref": "#/$defs/record" }, { "type": "object", "required": ["name", "direction", "completion"], "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 100 }, "direction": { "enum": ["do", "avoid"] }, "completion": { "type": "object", "required": ["method"], "properties": { "method": { "enum": ["quantity", "time"] } }, "additionalProperties": true } } }] } },
+    "blocks": { "type": "array", "items": { "allOf": [{ "$ref": "#/$defs/record" }, { "type": "object", "required": ["type", "name", "children"], "properties": { "type": { "enum": ["cycle", "routine", "workflow", "project", "action_list", "collection", "target"] }, "name": { "type": "string", "minLength": 1, "maxLength": 100 }, "direction": { "enum": ["do", "avoid"] }, "children": { "type": "array", "items": { "type": "object", "required": ["id", "kind", "refId"], "properties": { "id": { "type": "string", "minLength": 1 }, "kind": { "enum": ["action", "block"] }, "refId": { "type": "string", "minLength": 1 }, "frequency": { "type": "integer", "minimum": 1 } }, "additionalProperties": true } } }, "additionalProperties": true }] } }
+  }
+}
