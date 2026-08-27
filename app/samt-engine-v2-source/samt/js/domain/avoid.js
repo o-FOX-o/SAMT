@@ -3,6 +3,7 @@ import { calculatePeriodBounds } from "../shared/dates.js";
 import { round } from "../shared/numbers.js";
 import { aggregateLogsUnique } from "./logs.js";
 import { getDescendantActionIds } from "./relationships.js";
+import { validatePeriodDefinition } from "./periods.js";
 
 export function normalizeAvoidEvaluation(input = {}) {
   const mode = input.mode || "binary_limit";
@@ -39,6 +40,8 @@ export function validateAvoidEvaluation(input) {
     }
   }
   if (config.mode === "violation_multiplier" && !(config.violationPenalty > 0)) throw new InvalidAvoidEvaluationError("Violation penalty must be greater than zero.");
+  try { config.period = validatePeriodDefinition(config.period); }
+  catch (error) { throw new InvalidAvoidEvaluationError(error.message, error.details); }
   return config;
 }
 
@@ -74,11 +77,11 @@ export function evaluateAvoidValue(actual, input) {
   return { mode: config.mode, actual, allowedCount: config.allowedCount, score: excess === 0 ? 100 : null, failureLoad, status: excess === 0 ? "success" : "failed", reachedFailure: excess > 0 };
 }
 
-export function evaluateAvoidPeriod({ state, block, now, timezone, bounds: suppliedBounds }) {
-  const config = validateAvoidEvaluation(block.typeConfig && block.typeConfig.avoidEvaluation || {});
-  const activeSession = (config.period.mode || config.period) === "session" ? [...(state.avoidPeriods || [])].reverse().find((item) => item.blockId === block.id && !item.closedAt && !item.periodEnd) : null;
-  const bounds = suppliedBounds || (activeSession ? { start: activeSession.periodStart, end: activeSession.periodEnd, mode: "session" } : calculatePeriodBounds(config.period, now, timezone));
-  const actionIds = getDescendantActionIds(state, block.id, false);
+export function evaluateAvoidPeriod({ state, block, now, timezone, bounds: suppliedBounds, config: suppliedConfig = null, actionIds: suppliedActionIds = null }) {
+  const activePeriod = [...(state.avoidPeriods || [])].reverse().find((item) => item.blockId === block.id && !item.closedAt && item.lifecycleStatus !== "closed");
+  const config = validateAvoidEvaluation(suppliedConfig || activePeriod?.evaluationSnapshot || activePeriod?.targetSnapshot || block.typeConfig && block.typeConfig.avoidEvaluation || {});
+  const bounds = suppliedBounds || (activePeriod ? { start: activePeriod.periodStart, end: activePeriod.periodEnd, mode: config.period.mode || config.period } : calculatePeriodBounds(config.period, now, timezone));
+  const actionIds = suppliedActionIds ? new Set(suppliedActionIds) : activePeriod?.actionIdsSnapshot ? new Set(activePeriod.actionIdsSnapshot) : getDescendantActionIds(state, block.id, false);
   const aggregate = aggregateLogsUnique(state.actionLogs || [], { metric: config.metric, actionIds, bounds });
   return { blockId: block.id, metric: config.metric, bounds, logIds: aggregate.logIds, ...evaluateAvoidValue(aggregate.actual, config) };
 }

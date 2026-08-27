@@ -1,4 +1,4 @@
-import { deepClone, normalizeName } from "../shared/validation.js";
+import { deepClone, normalizeName, normalizedNameKey } from "../shared/validation.js";
 
 const COLLECTIONS = ["categories", "tags", "units", "actions", "blocks", "activationPresets", "styles"];
 
@@ -18,7 +18,7 @@ export function planImportConflicts(state, pkg) {
     for (const incoming of pkg.data[key] || []) {
       const byId = local.find((item) => item.id === incoming.id);
       const incomingName = normalizeName(incoming.name);
-      const byName = incomingName ? local.find((item) => normalizeName(item.name).toLowerCase() === incomingName.toLowerCase()) : null;
+      const byName = incomingName ? local.find((item) => normalizedNameKey(item.name) === normalizedNameKey(incomingName)) : null;
       if (byId) entries.push({ collection: key, incomingId: incoming.id, localId: byId.id, conflictType: sameContent(byId, incoming) ? "same_id_same" : "same_id_changed", resolution: sameContent(byId, incoming) ? "reuse" : "keep_mine" });
       else if (byName) entries.push({ collection: key, incomingId: incoming.id, localId: byName.id, conflictType: "same_name", resolution: "use_existing" });
       else entries.push({ collection: key, incomingId: incoming.id, localId: null, conflictType: "new", resolution: "create" });

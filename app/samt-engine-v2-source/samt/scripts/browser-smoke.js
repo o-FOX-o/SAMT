@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 const require = createRequire(import.meta.url);
 const { chromium } = require("/opt/codex/runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright");
 const executablePath = "/root/.cache/ms-playwright/chromium-1234/chrome-linux64/chrome";
+const appUrl = new URL("../dist/samt-app.html", import.meta.url).href;
 
 if (!existsSync(executablePath)) {
   console.log("Browser smoke skipped: this build environment has no Chromium executable.");
@@ -20,7 +21,7 @@ const errors = [];
 page.on("pageerror", (error) => errors.push(String(error)));
 
 try {
-  await page.goto("file:///workspace/samt/dist/samt-app.html", { waitUntil: "load" });
+  await page.goto(appUrl, { waitUntil: "load" });
   await page.waitForSelector(".app-shell");
 
   for (const viewport of [
@@ -73,7 +74,7 @@ try {
 
   await page.locator('[data-action="new-action"]').count().then(async (count) => {
     if (!count) {
-      await page.goto("file:///workspace/samt/dist/samt-app.html#/actions", { waitUntil: "load" });
+      await page.goto(`${appUrl}#/actions`, { waitUntil: "load" });
       await page.waitForSelector('[data-action="new-action"]');
     }
   });

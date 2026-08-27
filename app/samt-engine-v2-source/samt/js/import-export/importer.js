@@ -19,8 +19,10 @@ export function prepareImport(state, input) {
 }
 
 export function rebuildImportCandidate(state, preview) {
-  if (preview.isBackup) return deepClone(preview.candidate);
-  const candidate = applyConflictPlan(state, preview.package, preview.plan).state;
+  if (preview.isBackup) return prepareImport(state, preview.package).candidate;
+  const { package: pkg } = validatePackage(preview.package);
+  const plan = planImportConflicts(state, pkg);
+  const candidate = applyConflictPlan(state, pkg, plan).state;
   validateState(candidate);
   return candidate;
 }

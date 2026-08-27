@@ -2,7 +2,7 @@ import { StorageError } from "../shared/errors.js";
 import { createId } from "../shared/ids.js";
 import { deepClone } from "../shared/validation.js";
 import { runLogicalTransaction } from "../infrastructure/transactions.js";
-import { migrateInternalState, validateLegacyShape } from "../import-export/migrations.js";
+import { INTERNAL_STORAGE_VERSION, migrateInternalState, validateLegacyShape } from "../import-export/migrations.js";
 import { validateState } from "../import-export/validator.js";
 import { exportFullBackup, exportActionPackage, exportBlockPackage, exportStylePackage } from "../import-export/exporter.js";
 import { prepareImport, rebuildImportCandidate } from "../import-export/importer.js";
@@ -11,9 +11,9 @@ import { reconcileTemporalState } from "./lifecycle.js";
 import { EventCollector, EVENTS, StructuredLogger, domainEvent } from "./events.js";
 import { createQueries } from "./queries.js";
 import {
-  activateBlockCommand, advanceCycleCommand, commandContext, completeOccurrenceCommand, createActionCommand, createBlockCommand,
-  deleteActionLogCommand, finishRunCommand, logActionCommand, moveDefinitionToBinCommand, pauseBlockCommand, startRunCommand,
-  startPeriodCommand, closePeriodCommand, updateActionCommand, updateBlockCommand
+  activateBlockCommand, addBlockChildCommand, advanceCycleCommand, commandContext, completeOccurrenceCommand, createActionCommand, createBlockCommand,
+  deleteActionLogCommand, finishRunCommand, logActionCommand, moveDefinitionToBinCommand, pauseBlockCommand, pauseRunCommand, resumeBlockCommand, resumeRunCommand, startRunCommand,
+  startPeriodCommand, closePeriodCommand, removeBlockChildCommand, restoreDefinitionCommand, setPrimaryProjectCommand, updateActionCommand, updateActionLogCommand, updateBlockCommand
 } from "./commands.js";
 
 export class SamtEngine {
@@ -32,9 +32,9 @@ export class SamtEngine {
     const raw = await this.repository.load();
     const legacyValidation = validateLegacyShape(raw || {});
     if (raw && !legacyValidation.ok) throw new StorageError("Existing SAMT data failed pre-migration validation. Nothing was changed.", legacyValidation);
-    if (raw) await this.repository.createMigrationBackup(raw);
-    const migration = migrateInternalState(raw, { now: this.clock.now(), timezone: this.timezone });
     try {
+      if (raw) await this.repository.createMigrationBackup(raw, { targetVersion: INTERNAL_STORAGE_VERSION });
+      const migration = migrateInternalState(raw, { now: this.clock.now(), timezone: this.timezone });
       validateState(migration.state);
       const reconciled = reconcileTemporalState(migration.state, { now: this.clock.now(), timezone: migration.state.settings.timezone });
       validateState(reconciled.state);
@@ -57,7 +57,7 @@ export class SamtEngine {
       state: this.state,
       mutate: async (candidate) => {
         const result = await mutation(candidate, context);
-        candidate.meta = { ...(candidate.meta || {}), updatedAt: context.now };
+        if (!result?.preserveMeta) candidate.meta = { ...(candidate.meta || {}), updatedAt: context.now };
         return result;
       },
       validate: validateState,
@@ -71,19 +71,27 @@ export class SamtEngine {
   createAction(input) { return this.transact((state, context) => createActionCommand(state, input, context)); }
   updateAction(id, patch) { return this.transact((state, context) => updateActionCommand(state, id, patch, context)); }
   logAction(id, input) { return this.transact((state, context) => logActionCommand(state, id, input, context)); }
+  updateActionLog(id, patch) { return this.transact((state, context) => updateActionLogCommand(state, id, patch, context)); }
   deleteActionLog(id) { return this.transact((state, context) => deleteActionLogCommand(state, id, context)); }
   createBlock(input) { return this.transact((state, context) => createBlockCommand(state, input, context)); }
   updateBlock(id, patch) { return this.transact((state, context) => updateBlockCommand(state, id, patch, context)); }
+  addBlockChild(id, input) { return this.transact((state, context) => addBlockChildCommand(state, id, input, context)); }
+  removeBlockChild(id, relationshipId) { return this.transact((state, context) => removeBlockChildCommand(state, id, relationshipId, context)); }
   activateBlock(id, config = {}) { return this.transact((state, context) => activateBlockCommand(state, id, config, context)); }
-  pauseBlock(id, resumeAt) { return this.transact((state, context) => pauseBlockCommand(state, id, resumeAt, context)); }
+  pauseBlock(id, resumeAt) { return this.transact((state, context) => { const activation = state.activations.find((item) => item.id === id) || [...state.activations].reverse().find((item) => item.blockId === id && ["active", "running", "scheduled", "manual", "waiting"].includes(item.status)); return pauseBlockCommand(state, activation?.id || id, resumeAt, context); }); }
+  resumeBlock(id) { return this.transact((state, context) => { const activation = state.activations.find((item) => item.id === id) || [...state.activations].reverse().find((item) => item.blockId === id && item.status === "paused"); return resumeBlockCommand(state, activation?.id || id, context); }); }
   startRun(blockId, activationId = null) { return this.transact((state, context) => startRunCommand(state, blockId, activationId, context)); }
   finishRun(id) { return this.transact((state, context) => finishRunCommand(state, id, context)); }
+  pauseRun(id, resumeAt = null) { return this.transact((state, context) => pauseRunCommand(state, id, resumeAt, context)); }
+  resumeRun(id) { return this.transact((state, context) => resumeRunCommand(state, id, context)); }
   completeOccurrence(id, status = "completed") { return this.transact((state, context) => completeOccurrenceCommand(state, id, status, context)); }
   skipOccurrence(id) { return this.completeOccurrence(id, "skipped"); }
   advanceCycle(id) { return this.transact((state, context) => advanceCycleCommand(state, id, context)); }
   startPeriod(blockId) { return this.transact((state, context) => startPeriodCommand(state, blockId, context)); }
   closePeriod(periodId) { return this.transact((state, context) => closePeriodCommand(state, periodId, context)); }
   deleteDefinition(kind, id) { return this.transact((state, context) => moveDefinitionToBinCommand(state, kind, id, context)); }
+  restoreDefinition(binItemId) { return this.transact((state, context) => restoreDefinitionCommand(state, binItemId, context)); }
+  setPrimaryProject(blockId = null) { return this.transact((state, context) => setPrimaryProjectCommand(state, blockId, context)); }
 
   async reconcileTemporalState() {
     return this.transact((state, context) => {
@@ -121,10 +129,9 @@ export class SamtEngine {
       const restore = state.restorePoints.find((item) => item.id === restorePointId);
       if (!restore) throw new StorageError("Import Restore Point was not found.");
       const restored = deepClone(restore.snapshot);
-      restored.importHistory = [...(restored.importHistory || []), { id: context.id("import"), packageId: restore.packageId, packageType: "undo", importedAt: context.now, status: "undone" }];
       for (const key of Object.keys(state)) delete state[key];
       Object.assign(state, restored);
-      return { value: true, events: [domainEvent(EVENTS.IMPORT_UNDONE, { restorePointId }, context.now)] };
+      return { value: true, events: [domainEvent(EVENTS.IMPORT_UNDONE, { restorePointId }, context.now)], preserveMeta: true };
     });
   }
 

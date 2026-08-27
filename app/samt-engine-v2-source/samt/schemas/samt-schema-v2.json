@@ -29,6 +29,7 @@
         "analysisTargets": { "$ref": "#/$defs/records" },
         "targetPeriods": { "$ref": "#/$defs/records" },
         "avoidPeriods": { "$ref": "#/$defs/records" },
+        "cyclePeriods": { "$ref": "#/$defs/records" },
         "periodEvaluations": { "$ref": "#/$defs/records" },
         "styles": { "$ref": "#/$defs/records" },
         "restorePoints": { "$ref": "#/$defs/records" },
@@ -58,7 +59,7 @@
             "type": "object",
             "required": ["name", "direction", "completion"],
             "properties": {
-              "name": { "type": "string", "minLength": 1, "maxLength": 25 },
+              "name": { "type": "string", "minLength": 1, "maxLength": 100 },
               "direction": { "enum": ["do", "avoid"] },
               "completion": {
                 "type": "object",
@@ -81,7 +82,7 @@
             "required": ["type", "name", "children"],
             "properties": {
               "type": { "enum": ["cycle", "routine", "workflow", "project", "action_list", "collection", "target"] },
-              "name": { "type": "string", "minLength": 1, "maxLength": 25 },
+              "name": { "type": "string", "minLength": 1, "maxLength": 100 },
               "direction": { "enum": ["do", "avoid"] },
               "children": {
                 "type": "array",

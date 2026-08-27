@@ -4,6 +4,10 @@ import { exportBlockPackage, exportFullBackup } from "../../js/import-export/exp
 import { prepareImport } from "../../js/import-export/importer.js";
 import { validatePackage, validateState } from "../../js/import-export/validator.js";
 import { stateAt, action, block, relationship } from "../helpers.js";
+import { SamtEngine } from "../../js/application/engine.js";
+import { FakeClock } from "../../js/infrastructure/clock.js";
+import { MemoryRepository } from "../../js/infrastructure/repository.js";
+import { deterministicIds } from "../helpers.js";
 
 test("Target Block package round trip preserves semantics", () => {
   const source = stateAt();
@@ -68,4 +72,46 @@ test("schema v1 package migrates explicitly to v2", () => {
   assert.equal(preview.package.schemaVersion, 2);
   assert.deepEqual(preview.package.rootObjectIds, []);
   assert.equal(preview.candidate.actions[0].id, "legacy_action");
+});
+
+test("commit rebuilds the candidate from a validated package and ignores a mutated preview candidate", async () => {
+  const source = stateAt();
+  source.actions.push(action("safe_action", "Safe Action"));
+  const pkg = exportBlockPackage({ ...source, blocks: [block("safe_block", "Safe Block", "collection", [relationship("safe_rel", "action", "safe_action")])] }, ["safe_block"], { id: "safe_package", now: "2026-08-24T11:00:00.000Z" });
+  const repository = new MemoryRepository(stateAt());
+  const engine = new SamtEngine({ repository, clock: new FakeClock("2026-08-24T12:00:00.000Z"), idFactory: deterministicIds() });
+  await engine.initialize();
+  const preview = engine.prepareImport(pkg);
+  preview.candidate.actions[0].name = "Injected Mutation";
+  preview.plan[0].resolution = "replace_existing";
+  await engine.commitImport(preview);
+  assert.equal(engine.queries.getActionById("safe_action").name, "Safe Action");
+});
+
+test("Undo Import restores the exact pre-import state", async () => {
+  const local = stateAt();
+  local.actions.push(action("local_action", "Local Action"));
+  const source = stateAt();
+  source.actions.push(action("incoming_action", "Incoming Action"));
+  const pkg = exportFullBackup(source, { id: "backup_exact", now: "2026-08-24T11:00:00.000Z" });
+  const repository = new MemoryRepository(local);
+  const engine = new SamtEngine({ repository, clock: new FakeClock("2026-08-24T12:00:00.000Z"), idFactory: deterministicIds() });
+  await engine.initialize();
+  const before = engine.queries.getState();
+  const committed = await engine.commitImport(engine.prepareImport(pkg));
+  assert.equal(engine.queries.getActionById("incoming_action").name, "Incoming Action");
+  await engine.undoImport(committed.value.restorePointId);
+  assert.deepEqual(engine.queries.getState(), before);
+});
+
+test("package validation rejects duplicate IDs and missing roots before import", () => {
+  const source = stateAt();
+  source.actions.push(action("duplicate", "Duplicate"));
+  const pkg = {
+    format: "life-command", schemaVersion: 2, packageId: "invalid_package", packageType: "action-package", exportedAt: "2026-08-24T11:00:00.000Z", rootObjectIds: ["missing"],
+    data: { categories: [], tags: [], units: [], actions: [source.actions[0], { ...source.actions[0], name: "Second" }], blocks: [], activationPresets: [], styles: [] }
+  };
+  assert.throws(() => validatePackage(pkg), /duplicate stable ID/);
+  pkg.data.actions.pop();
+  assert.throws(() => validatePackage(pkg), /root is missing/);
 });

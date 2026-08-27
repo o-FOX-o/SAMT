@@ -15,21 +15,28 @@ export function deepClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-export function normalizeName(value) {
-  return String(value || "")
-    .replace(/[^A-Za-z0-9 ]+/g, " ")
-    .replace(/([A-Za-z])([0-9])/g, "$1 $2")
-    .replace(/([0-9])([A-Za-z])/g, "$1 $2")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLocaleLowerCase()
-    .replace(/\b\w/g, (character) => character.toLocaleUpperCase())
-    .slice(0, 25)
+export const MAX_NAME_LENGTH = 100;
+export const MAX_UNIT_NAME_LENGTH = 40;
+
+function normalizeDisplayText(value, maximumLength) {
+  const normalized = String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, " ")
+    .replace(/\s+/gu, " ")
     .trim();
+  return [...normalized].slice(0, maximumLength).join("").trim();
+}
+
+export function normalizeName(value) {
+  return normalizeDisplayText(value, MAX_NAME_LENGTH);
+}
+
+export function normalizedNameKey(value) {
+  return normalizeName(value).toLocaleLowerCase();
 }
 
 export function normalizeUnitName(value) {
-  return String(value || "").replace(/[^A-Za-z ]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 15);
+  return normalizeDisplayText(value, MAX_UNIT_NAME_LENGTH);
 }
 
 export function assertStableId(value, label = "Object") {
@@ -54,7 +61,7 @@ export function assertUniqueNormalizedNames(items, kind) {
   for (const item of items || []) {
     const normalized = normalizeName(item.name);
     invariant(normalized.length > 0, `${kind} name is required.`, { id: item.id });
-    const key = normalized.toLocaleLowerCase();
+    const key = normalizedNameKey(normalized);
     if (names.has(key)) throw new ConflictError(`${kind} name already exists: ${normalized}`, { firstId: names.get(key), secondId: item.id });
     names.set(key, item.id);
   }

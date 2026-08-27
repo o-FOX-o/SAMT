@@ -11,11 +11,19 @@ export function resolveOccurrenceStatus(occurrence, now) {
   const due = occurrence.dueAt ? new Date(occurrence.dueAt).getTime() : Infinity;
   if (!Number.isFinite(time)) throw new InvalidScheduleError("Occurrence evaluation time is invalid.");
   if (time < available) return "upcoming";
-  if (time > due) return occurrence.expiryPolicy === "expire" ? "missed" : "overdue";
+  if (time >= due) return occurrence.expiryPolicy === "expire" ? "missed" : "overdue";
   if (Number(occurrence.actual || 0) > 0) return "partial";
   return occurrence.dueAt ? "due" : "available";
 }
 
 export function completeOccurrence(occurrence, now, status = "completed") {
-  return { ...occurrence, status, completedAt: now, updatedAt: now };
+  if (!CLOSED_OCCURRENCE_STATES.includes(status)) throw new InvalidScheduleError("Occurrence can only close as completed, skipped or missed.");
+  return {
+    ...occurrence,
+    status,
+    completedAt: status === "completed" ? now : occurrence.completedAt || null,
+    skippedAt: status === "skipped" ? now : occurrence.skippedAt || null,
+    missedAt: status === "missed" ? now : occurrence.missedAt || null,
+    updatedAt: now
+  };
 }

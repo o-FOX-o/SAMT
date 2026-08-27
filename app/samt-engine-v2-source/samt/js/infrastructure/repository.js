@@ -1,6 +1,6 @@
 import { StorageError } from "../shared/errors.js";
 import { deepClone } from "../shared/validation.js";
-import { ENGINE_BACKUP_KEY, STATE_KEY, readLocalCandidates, writeLocalMigrationBackup, writeLocalState } from "./local-storage.js";
+import { STATE_KEY, migrationBackupKey, readLocalCandidates, writeLocalMigrationBackup, writeLocalState } from "./local-storage.js";
 import { readIndexedState, writeIndexedTransaction } from "./indexed-db.js";
 
 function stateWeight(candidate) {
@@ -13,10 +13,25 @@ function stateTime(candidate) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function sourcePriority(source = "") {
+  if (source.startsWith("indexedDB:")) return 4;
+  if (source.endsWith(STATE_KEY)) return 3;
+  if (source.includes("fallback")) return 2;
+  if (source.includes("recovery")) return 1;
+  return 0;
+}
+
 export function selectBestStateCandidate(candidates) {
   return [...candidates].filter((item) => item && item.value).sort((a, b) => {
-    const weightDifference = stateWeight(b.value) - stateWeight(a.value);
-    return weightDifference || stateTime(b.value) - stateTime(a.value);
+    const aTime = stateTime(a.value);
+    const bTime = stateTime(b.value);
+    if (aTime || bTime) {
+      const timeDifference = bTime - aTime;
+      if (timeDifference) return timeDifference;
+    }
+    const sourceDifference = sourcePriority(b.source) - sourcePriority(a.source);
+    if (sourceDifference) return sourceDifference;
+    return stateWeight(b.value) - stateWeight(a.value);
   })[0] || null;
 }
 
@@ -76,12 +91,17 @@ export class LegacyBrowserRepository extends Repository {
     return selected ? deepClone(selected.value) : null;
   }
 
-  async createMigrationBackup(state) {
+  async createMigrationBackup(state, { targetVersion = 2 } = {}) {
     if (!state) return;
+    const backupKey = migrationBackupKey(targetVersion);
     let saved = false;
     const failures = [];
-    try { writeLocalMigrationBackup(this.localStorage, state); saved = Boolean(this.localStorage); } catch (error) { failures.push(error); }
-    try { await writeIndexedTransaction(this.indexedDB, [[ENGINE_BACKUP_KEY, deepClone(state)]]); saved = true; }
+    try { writeLocalMigrationBackup(this.localStorage, state, backupKey); saved = Boolean(this.localStorage); } catch (error) { failures.push(error); }
+    try {
+      const existing = await readIndexedState(this.indexedDB, backupKey);
+      if (!existing) await writeIndexedTransaction(this.indexedDB, [[backupKey, deepClone(state)]]);
+      saved = true;
+    }
     catch (error) { failures.push(error); }
     if (!saved) throw new StorageError("Could not create a pre-migration backup.", { causes: failures.map((error) => error.message) });
     if (failures.length) this.logger?.debug("Storage", "One backup adapter was unavailable; another retained the backup.", { causes: failures.map((error) => error.message) });
@@ -92,8 +112,7 @@ export class LegacyBrowserRepository extends Repository {
     let saved = false;
     const failures = [];
     try {
-      const entries = previous ? [[ENGINE_BACKUP_KEY, deepClone(previous)], [STATE_KEY, snapshot]] : [[STATE_KEY, snapshot]];
-      await writeIndexedTransaction(this.indexedDB, entries);
+      await writeIndexedTransaction(this.indexedDB, [[STATE_KEY, snapshot]]);
       saved = true;
     } catch (error) { failures.push(error); }
     try { writeLocalState(this.localStorage, snapshot, previous); saved = saved || Boolean(this.localStorage); }
@@ -113,9 +132,14 @@ export class LegacyBrowserRepository extends Repository {
 }
 
 export class MemoryRepository extends Repository {
-  constructor(initialState = null) { super(); this.state = initialState ? deepClone(initialState) : null; this.backups = []; }
+  constructor(initialState = null) { super(); this.state = initialState ? deepClone(initialState) : null; this.backups = []; this.backupVersions = new Set(); }
   async load() { return this.state ? deepClone(this.state) : null; }
-  async createMigrationBackup(state) { this.backups.push(deepClone(state)); }
+  async createMigrationBackup(state, { targetVersion = 2 } = {}) {
+    if (!this.backupVersions.has(targetVersion)) {
+      this.backupVersions.add(targetVersion);
+      this.backups.push(deepClone(state));
+    }
+  }
   async save(state) { this.state = deepClone(state); return this.load(); }
   async transaction(callback) {
     const candidate = deepClone(this.state);

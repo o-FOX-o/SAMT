@@ -14,11 +14,18 @@ export function getDescendants(state, blockId) { return { blockIds: [...getDesce
 export function getOccurrenceView(state, occurrence, now) {
   const action = getActionById(state, occurrence.actionId);
   const block = getBlockById(state, occurrence.parentBlockId || occurrence.blockId || occurrence.contextBlockId);
-  return { ...occurrence, status: resolveOccurrenceStatus(occurrence, now), actionName: action?.name || occurrence.actionNameSnapshot || "Unknown Action", direction: action?.direction || "do", blockName: block?.name || occurrence.blockNameSnapshot || "" };
+  const configuredRequired = occurrence.required ?? occurrence.relationshipSnapshot?.required;
+  const requiredIds = block?.completion?.requiredRelIds || [];
+  const required = configuredRequired == null ? (requiredIds.length ? requiredIds.includes(occurrence.relationshipId) : true) : Boolean(configuredRequired);
+  return { ...occurrence, status: resolveOccurrenceStatus(occurrence, now), actionName: action?.name || occurrence.actionNameSnapshot || "Unknown Action", direction: action?.direction || occurrence.directionSnapshot || "do", blockName: block?.name || occurrence.blockNameSnapshot || "", required };
 }
 
 export function getDueOccurrences(state, now) {
-  return (state.occurrences || []).map((item) => getOccurrenceView(state, item, now)).filter((item) => item.direction === "do" && ["due", "overdue", "partial", "available"].includes(item.status));
+  return (state.occurrences || []).map((item) => getOccurrenceView(state, item, now)).filter((item) => item.direction === "do" && ["due", "overdue", "partial"].includes(item.status));
+}
+
+export function getAvailableOccurrences(state, now) {
+  return (state.occurrences || []).map((item) => getOccurrenceView(state, item, now)).filter((item) => item.direction === "do" && item.status === "available");
 }
 
 export function getUpcomingOccurrences(state, now, limit = 5) {

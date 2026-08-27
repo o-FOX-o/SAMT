@@ -5,6 +5,10 @@ export const FALLBACK_KEY = "life-command-v1-fallback";
 export const RECOVERY_KEY = "life-command-v1-recovery";
 export const ENGINE_BACKUP_KEY = "life-command-engine-v2-pre-migration";
 
+export function migrationBackupKey(targetVersion = 2) {
+  return Number(targetVersion) === 2 ? ENGINE_BACKUP_KEY : `life-command-engine-v${Number(targetVersion)}-pre-migration`;
+}
+
 export function parseStoredState(raw) {
   if (!raw) return null;
   try {
@@ -34,7 +38,7 @@ export function writeLocalState(storage, next, previous = null) {
   storage.setItem(STATE_KEY, serialized);
 }
 
-export function writeLocalMigrationBackup(storage, state) {
+export function writeLocalMigrationBackup(storage, state, key = ENGINE_BACKUP_KEY) {
   if (!storage || !state) return;
-  storage.setItem(ENGINE_BACKUP_KEY, JSON.stringify(deepClone(state)));
+  if (storage.getItem(key) == null) storage.setItem(key, JSON.stringify(deepClone(state)));
 }

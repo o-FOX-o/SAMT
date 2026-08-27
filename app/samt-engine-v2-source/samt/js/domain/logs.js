@@ -19,6 +19,7 @@ export function logMetricValue(log, metric) {
   if (metric === "quantity") return Number(log.quantityPerformed ?? log.quantity ?? log.amount ?? 0) || 0;
   if (metric === "count") return 1;
   if (metric === "completion_count") {
+    if ((log.completionOccurrenceIds || []).length > 0 || Number(log.standaloneCompletionCount || 0) > 0) return 1;
     if (Number(log.completionCount || 0) > 0) return 1;
     const actual = log.completionMethodSnapshot === "time" ? Number(log.durationPerformed ?? log.durationMinutes ?? 0) : Number(log.quantityPerformed ?? log.quantity ?? 0);
     const target = Number(log.completionTargetSnapshot || (log.completionMethodSnapshot === "quantity" ? 1 : 0));

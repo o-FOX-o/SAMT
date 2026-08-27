@@ -9,5 +9,9 @@ export function assertOneActiveActivation(activations, blockId, exceptId = null)
 }
 
 export function pauseActivation(activation, pausedAt, resumeAt) {
-  return { ...activation, status: "paused", pausedAt, resumeAt };
+  return { ...activation, statusBeforePause: activation.status === "paused" ? activation.statusBeforePause : activation.status, status: "paused", pausedAt, resumeAt: resumeAt || null, updatedAt: pausedAt };
+}
+
+export function resumeActivation(activation, resumedAt) {
+  return { ...activation, status: activation.statusBeforePause || "manual", statusBeforePause: null, pausedAt: null, resumeAt: null, resumedAt, updatedAt: resumedAt };
 }

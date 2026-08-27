@@ -10,6 +10,12 @@
    a query, not a second truth database.
 5. Historical records retain name/configuration snapshots where interpretation
    could otherwise change.
+6. A factual event time and the time it was recorded are separate. Period
+   attribution uses the factual event time.
+7. Updating or deleting a log is a correction: affected runtime totals are
+   recalculated and History retains the prior factual snapshot.
+8. Names are Unicode labels, not identity. Normalisation preserves multilingual
+   text and stable IDs never change when labels change.
 
 ## Definitions and execution
 
@@ -42,6 +48,8 @@
 6. Parent and child Targets are independent unless required child Targets are
    explicitly enabled.
 7. Closing a period saves an evaluation; it never deletes its logs.
+8. An open period keeps its Target definition and descendant Action scope
+   snapshot. Definition edits take effect in the next period.
 
 ## Avoid
 
@@ -66,24 +74,31 @@
 3. Period reset and sequence-position reset are different operations.
 4. Default period-end position policy is Continue.
 5. Default missed-item policy is Keep Position; Skip and Restart are explicit.
+6. Cycle period close records whether the current item was completed, then
+   applies missed-item and position policies as two separate decisions.
 
 ## Scheduling and time
 
 1. Time is injected into domain/application services.
 2. Calendar boundaries use an explicit timezone and configured week start.
 3. Recurring reconciliation is deterministic and idempotent.
-4. Daily expired prayer/nutrition-style occurrences become missed when their
+4. Reconciliation catches up every elapsed local-calendar window after an
+   offline gap. Stable temporal IDs prevent duplicate periods and Occurrences.
+5. Daily expired prayer/nutrition-style occurrences become missed when their
    relationship is configured to expire; they do not carry into the next day.
-5. Friday-only schedules generate no Thursday or Saturday occurrence.
+6. Friday-only schedules generate no Thursday or Saturday occurrence.
 
 ## Data safety and packages
 
 1. Fresh state is empty; migration never deletes existing data.
 2. Existing storage names and stable IDs are preserved.
-3. Migration backs up, validates and commits atomically; failure leaves the old
-   state untouched.
+3. Migration reads and validates the legacy shape, saves an immutable
+   version-keyed raw backup, migrates in memory, validates, then commits
+   atomically. Failure leaves the old state untouched.
 4. Package schema version 2 remains canonical; version 1 packages migrate to 2.
 5. Reusable packages never replace factual History. Full Backup is the only
    complete-state transport.
 6. Import validates references and the complete remapped graph before one
    transaction commits it.
+7. Import commit rebuilds from the validated package instead of trusting a
+   mutable preview candidate. Undo Import restores the exact pre-import state.

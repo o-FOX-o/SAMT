@@ -45,7 +45,7 @@ function renderRoute() {
       const block = engine.queries.getBlockById(route.id);
       const progress = block.type === "target" ? (block.direction === "avoid" ? engine.queries.getAvoidStatus(route.id) : engine.queries.getTargetProgress(route.id)) : null;
       content = renderBlockDetailView(detail, progress);
-    } else if (route.name === "block-edit") content = renderBlockEditView(engine.queries.getBlockById(route.id));
+    } else if (route.name === "block-edit") content = renderBlockEditView(engine.queries.getBlockDetail(route.id));
     else if (route.name === "analysis") content = renderAnalysisView(engine.queries.getAnalysisViewModel());
     else if (route.name === "history") content = renderHistoryView(engine.queries.getState().history);
     else if (route.name === "settings") content = renderSettingsView(engine.queries.getState());
@@ -71,7 +71,7 @@ async function showError(error) {
 
 function actionFields(action = null) {
   const completion = action?.completion || { method: "quantity", target: 1, minimumMinutes: 0 };
-  return `<div class="form-grid"><label class="field field-full"><span class="label">Name</span><input class="input" name="name" maxlength="25" required value="${escapeHtml(action?.name || "")}"></label><label class="field"><span class="label">Direction</span><select class="select" name="direction"><option value="do" ${action?.direction !== "avoid" ? "selected" : ""}>Do</option><option value="avoid" ${action?.direction === "avoid" ? "selected" : ""}>Avoid</option></select></label><label class="field"><span class="label">Completion</span><select class="select" name="method"><option value="quantity" ${completion.method === "quantity" ? "selected" : ""}>Quantity</option><option value="time" ${completion.method === "time" ? "selected" : ""}>Time</option></select></label><label class="field"><span class="label">Quantity target</span><input class="input" type="number" min="1" step="1" name="target" value="${escapeHtml(completion.target ?? 1)}"></label><label class="field"><span class="label">Minimum minutes</span><input class="input" type="number" min="0" step="1" name="minimumMinutes" value="${escapeHtml(completion.minimumMinutes ?? 0)}"></label><label class="field field-full"><span class="label">Description</span><textarea class="textarea" name="description">${escapeHtml(action?.description || "")}</textarea></label></div>`;
+  return `<div class="form-grid"><label class="field field-full"><span class="label">Name</span><input class="input" name="name" maxlength="100" required value="${escapeHtml(action?.name || "")}"></label><label class="field"><span class="label">Direction</span><select class="select" name="direction"><option value="do" ${action?.direction !== "avoid" ? "selected" : ""}>Do</option><option value="avoid" ${action?.direction === "avoid" ? "selected" : ""}>Avoid</option></select></label><label class="field"><span class="label">Completion</span><select class="select" name="method"><option value="quantity" ${completion.method === "quantity" ? "selected" : ""}>Quantity</option><option value="time" ${completion.method === "time" ? "selected" : ""}>Time</option></select></label><label class="field"><span class="label">Quantity target</span><input class="input" type="number" min="1" step="1" name="target" value="${escapeHtml(completion.target ?? 1)}"></label><label class="field"><span class="label">Minimum minutes</span><input class="input" type="number" min="0" step="1" name="minimumMinutes" value="${escapeHtml(completion.minimumMinutes ?? 0)}"></label><label class="field field-full"><span class="label">Description</span><textarea class="textarea" name="description">${escapeHtml(action?.description || "")}</textarea></label></div>`;
 }
 
 async function editAction(id = null) {
@@ -87,7 +87,7 @@ async function editAction(id = null) {
 
 function blockFields(type = "routine") {
   const options = [["cycle", "Cycle"], ["routine", "Routine"], ["workflow", "Workflow"], ["project", "Project"], ["action_list", "Action List"], ["collection", "Collection"], ["target", "Target Block"]];
-  return `<div class="form-grid"><label class="field field-full"><span class="label">Name</span><input class="input" name="name" maxlength="25" required></label><label class="field"><span class="label">Type</span><select class="select" name="type">${options.map(([value, label]) => `<option value="${value}" ${type === value ? "selected" : ""}>${label}</option>`).join("")}</select></label><label class="field"><span class="label">Direction</span><select class="select" name="direction"><option value="do">Do</option><option value="avoid">Avoid</option></select></label><label class="field"><span class="label">Target value (Target Block)</span><input class="input" type="number" min="1" step="1" name="targetValue" value="60"></label><label class="field"><span class="label">Target metric</span><select class="select" name="targetMetric"><option value="time">Time (minutes)</option><option value="quantity">Quantity</option><option value="completion_count">Completion count</option></select></label><label class="field"><span class="label">Period</span><select class="select" name="period"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option><option value="all_time">All time</option></select></label><label class="field field-full"><span class="label">Description</span><textarea class="textarea" name="description"></textarea></label></div>`;
+  return `<div class="form-grid"><label class="field field-full"><span class="label">Name</span><input class="input" name="name" maxlength="100" required></label><label class="field"><span class="label">Type</span><select class="select" name="type">${options.map(([value, label]) => `<option value="${value}" ${type === value ? "selected" : ""}>${label}</option>`).join("")}</select></label><label class="field"><span class="label">Direction</span><select class="select" name="direction"><option value="do">Do</option><option value="avoid">Avoid</option></select></label><label class="field"><span class="label">Target value (Target Block)</span><input class="input" type="number" min="1" step="1" name="targetValue" value="60"></label><label class="field"><span class="label">Target metric</span><select class="select" name="targetMetric"><option value="time">Time (minutes)</option><option value="quantity">Quantity</option><option value="completion_count">Completion count</option></select></label><label class="field"><span class="label">Period</span><select class="select" name="period"><option value="session">Session</option><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option><option value="all_time">All time</option></select></label><label class="field field-full"><span class="label">Description</span><textarea class="textarea" name="description"></textarea></label></div>`;
 }
 
 async function createBlock(type = "routine") {
@@ -102,20 +102,46 @@ async function createBlock(type = "routine") {
   navigate(`/blocks/${created.value.id}`);
 }
 
-async function logAction(id) {
+function localDateTimeValue(value) {
+  const date = new Date(value);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
+}
+
+function logFields(action, log = null) {
+  const isTime = action.completion?.method === "time";
+  const amount = isTime ? (log?.durationPerformed ?? 30) : (log?.quantityPerformed ?? 1);
+  return `<div class="form-grid"><label class="field"><span class="label">${isTime ? "Minutes" : "Quantity"}</span><input class="input" name="value" type="number" min="${isTime ? 0.01 : 1}" step="${isTime ? 0.01 : 1}" required value="${escapeHtml(amount)}"></label><label class="field"><span class="label">When it happened</span><input class="input" name="timestamp" type="datetime-local" required value="${escapeHtml(localDateTimeValue(log?.timestamp || engine.clock.now()))}"></label>${action.result?.mode !== "none" ? `<label class="field"><span class="label">Result</span><input class="input" name="result" type="number" step="any" value="${escapeHtml(log?.resultValue ?? "")}"></label>` : ""}<label class="field field-full"><span class="label">Note</span><textarea class="textarea" name="note">${escapeHtml(log?.note || "")}</textarea></label></div>`;
+}
+
+async function logAction(id, { occurrenceId = null } = {}) {
   const action = engine.queries.getActionById(id);
   if (!action) return;
   const isTime = action.completion?.method === "time";
-  const data = await modal.open({ title: `Log ${action.name}`, body: `<label class="field"><span class="label">${isTime ? "Minutes" : "Quantity"}</span><input class="input" name="value" type="number" min="${isTime ? 0.01 : 1}" step="${isTime ? 0.01 : 1}" required value="${isTime ? 30 : 1}"></label>${action.result?.mode !== "none" ? '<label class="field"><span class="label">Result</span><input class="input" name="result" type="number" step="any"></label>' : ""}<label class="field"><span class="label">Note</span><textarea class="textarea" name="note"></textarea></label>`, submitLabel: "Save log" });
+  const data = await modal.open({ title: `Log ${action.name}`, body: logFields(action), submitLabel: "Save log" });
   if (!data) return;
   const value = Number(data.get("value"));
-  await engine.logAction(id, { ...(isTime ? { durationPerformed: value } : { quantityPerformed: value }), resultValue: data.get("result") === "" ? null : Number(data.get("result")), note: data.get("note") });
+  await engine.logAction(id, { ...(isTime ? { durationPerformed: value } : { quantityPerformed: value }), timestamp: new Date(data.get("timestamp")).toISOString(), resultValue: data.get("result") === "" ? null : Number(data.get("result")), note: data.get("note"), ...(occurrenceId ? { occurrenceId } : {}) });
   showToast("One factual Action Log saved.");
   renderRoute();
 }
 
+async function editLog(id) {
+  const log = engine.queries.getState().actionLogs.find((item) => item.id === id);
+  if (!log) return;
+  const action = engine.queries.getActionById(log.actionId);
+  if (!action) throw new Error("The Action definition for this log is unavailable.");
+  const isTime = action.completion?.method === "time";
+  const data = await modal.open({ title: `Correct ${action.name} log`, body: `${logFields(action, log)}<p class="muted">The original factual snapshot remains in History as a correction record.</p>`, submitLabel: "Save correction" });
+  if (!data) return;
+  const value = Number(data.get("value"));
+  await engine.updateActionLog(id, { ...(isTime ? { durationPerformed: value } : { quantityPerformed: value }), timestamp: new Date(data.get("timestamp")).toISOString(), resultValue: data.get("result") === "" ? null : Number(data.get("result")), note: data.get("note") });
+  showToast("Action Log corrected.");
+  renderRoute();
+}
+
 async function quickLog() {
-  const actions = engine.queries.getActions({ status: "active" });
+  const actions = engine.queries.getHomeViewModel().quickLog;
   if (!actions.length) { await modal.open({ title: "Quick Log", body: '<p>Create an Action first.</p>', cancelLabel: "Close" }); return; }
   const data = await modal.open({ title: "Quick Log", body: `<label class="field"><span class="label">Action</span><select class="select" name="actionId">${actions.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}</option>`).join("")}</select></label>`, submitLabel: "Continue" });
   if (data) await logAction(data.get("actionId"));
@@ -131,10 +157,30 @@ async function deleteDefinition(kind, id) {
   if (parseRoute().id === id) navigate(kind === "action" ? "/actions" : "/blocks"); else renderRoute();
 }
 
+async function addBlockChild(blockId) {
+  const parent = engine.queries.getBlockById(blockId);
+  const actions = engine.queries.getActions().filter((item) => item.status !== "archived");
+  const blocks = engine.queries.getBlocks().filter((item) => item.id !== blockId && item.status !== "archived");
+  const options = [
+    ...actions.map((item) => ({ value: `action:${item.id}`, label: `Action — ${item.name}` })),
+    ...blocks.map((item) => ({ value: `block:${item.id}`, label: `${item.type.replaceAll("_", " ")} — ${item.name}` }))
+  ];
+  if (!options.length) { await modal.open({ title: "Add Child", body: "<p>Create another Action or Block first.</p>", cancelLabel: "Close" }); return; }
+  const data = await modal.open({ title: `Add child to ${parent.name}`, body: `<div class="form-grid"><label class="field field-full"><span class="label">Existing definition</span><select class="select" name="child">${options.map((item) => `<option value="${escapeHtml(item.value)}">${escapeHtml(item.label)}</option>`).join("")}</select></label>${parent.type === "cycle" ? '<label class="field"><span class="label">Frequency per round</span><input class="input" name="frequency" type="number" min="1" step="1" value="1"></label>' : ""}<label class="field"><span class="label"><input type="checkbox" name="required" value="yes"> Required child</span></label></div>`, submitLabel: "Add Child" });
+  if (!data) return;
+  const selected = String(data.get("child"));
+  const separator = selected.indexOf(":");
+  const kind = selected.slice(0, separator);
+  const refId = selected.slice(separator + 1);
+  await engine.addBlockChild(blockId, { kind, refId, frequency: Number(data.get("frequency") || 1), required: data.get("required") === "yes" });
+  showToast("Child relationship added.");
+  renderRoute();
+}
+
 async function saveBlockForm(event) {
   event.preventDefault();
   const form = event.currentTarget;
-  await engine.updateBlock(form.dataset.id, { name: form.elements.name.value, description: form.elements.description.value });
+  await engine.updateBlock(form.dataset.id, { name: form.elements.name.value, description: form.elements.description.value, status: form.elements.status.value });
   showToast("Block updated without changing its ID.");
   navigate(`/blocks/${encodeURIComponent(form.dataset.id)}`);
 }
@@ -163,12 +209,16 @@ async function importPackage() {
 async function startBlock(id) {
   const block = engine.queries.getBlockById(id);
   const detail = engine.queries.getBlockDetail(id);
-  let activation = detail.activeActivation;
-  if (!activation) activation = (await engine.activateBlock(id, { status: "manual" })).value;
   const periodMode = block.direction === "avoid" ? block.typeConfig?.avoidEvaluation?.period?.mode : block.typeConfig?.period?.mode;
-  if (block.type === "target" && periodMode === "session") await engine.startPeriod(id);
-  else if (block.type !== "target") await engine.startRun(id, activation.id);
-  showToast(block.type === "target" ? (periodMode === "session" ? "Target session started." : "Target Block activated.") : "Run started.");
+  if (block.type === "target" && periodMode === "session") {
+    await engine.startPeriod(id);
+    showToast("Target session started.");
+  } else {
+    let activation = detail.activeActivation;
+    if (!activation) activation = (await engine.activateBlock(id, { status: "manual" })).value;
+    await engine.startRun(id, activation.id);
+    showToast("Run started.");
+  }
   renderRoute();
 }
 
@@ -180,19 +230,30 @@ document.addEventListener("click", async (event) => {
     if (action === "new-action") await editAction();
     else if (action === "edit-action") await editAction(control.dataset.id);
     else if (action === "log-action") await logAction(control.dataset.id);
+    else if (action === "log-occurrence") await logAction(control.dataset.id, { occurrenceId: control.dataset.occurrenceId });
+    else if (action === "edit-log") await editLog(control.dataset.id);
     else if (action === "quick-log") await quickLog();
     else if (action === "new-block") await createBlock();
     else if (action === "new-action-list") await createBlock("action_list");
     else if (action === "delete-action") await deleteDefinition("action", control.dataset.id);
     else if (action === "delete-block") await deleteDefinition("block", control.dataset.id);
     else if (action === "delete-log") { if (await modal.confirm({ title: "Delete this Action Log?", message: "The factual event and its contribution will be removed. A correction remains in History.", confirmLabel: "Delete Log", destructive: true })) { await engine.deleteActionLog(control.dataset.id); renderRoute(); } }
+    else if (action === "add-block-child") await addBlockChild(control.dataset.id);
+    else if (action === "remove-block-child") { if (await modal.confirm({ title: "Remove this child?", message: "The reusable definition remains available. Open occurrences for this relationship will be skipped.", confirmLabel: "Remove", destructive: true })) { await engine.removeBlockChild(control.dataset.id, control.dataset.relationshipId); renderRoute(); } }
     else if (action === "start-block") await startBlock(control.dataset.id);
+    else if (action === "pause-run") { await engine.pauseRun(control.dataset.id); showToast("Run paused."); renderRoute(); }
+    else if (action === "resume-run") { await engine.resumeRun(control.dataset.id); showToast("Run resumed."); renderRoute(); }
+    else if (action === "finish-run") { await engine.finishRun(control.dataset.id); showToast("Run finished."); renderRoute(); }
+    else if (action === "advance-cycle") { await engine.advanceCycle(control.dataset.id); showToast("Cycle advanced."); renderRoute(); }
+    else if (action === "skip-occurrence") { await engine.skipOccurrence(control.dataset.id); showToast("Occurrence skipped."); renderRoute(); }
+    else if (action === "set-primary-project") { await engine.setPrimaryProject(control.dataset.id); showToast("Primary Project updated."); renderRoute(); }
     else if (action === "close-period") { await engine.closePeriod(control.dataset.id); showToast("Session saved."); renderRoute(); }
     else if (action === "open-more") await modal.open({ title: "Navigate", body: moreNavigationMarkup(parseRoute()), cancelLabel: "Close" });
     else if (action === "set-mode") { await engine.setAppearanceMode(control.dataset.mode); applyMode(); renderRoute(); }
     else if (action === "export-backup") downloadJson(`samt-full-backup-${new Date().toISOString().slice(0, 10)}.json`, engine.makePackage("backup"));
     else if (action === "import-backup") await importPackage();
     else if (action === "undo-import") { if (await modal.confirm({ title: "Undo latest import?", message: "Restore the exact pre-import state?", confirmLabel: "Undo Import", destructive: true })) { await engine.undoImport(control.dataset.id); applyMode(); renderRoute(); } }
+    else if (action === "restore-definition") { await engine.restoreDefinition(control.dataset.id); showToast("Definition restored from the Bin."); renderRoute(); }
   } catch (error) { await showError(error); }
 });
 

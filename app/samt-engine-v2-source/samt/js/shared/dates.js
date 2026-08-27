@@ -131,6 +131,12 @@ export function calculatePeriodBounds(periodInput, now, timezone) {
   return { ...bounds, mode };
 }
 
+export function nextPeriodBounds(periodInput, bounds, timezone) {
+  if (!bounds?.end) return null;
+  const nextInstant = new Date(toInstant(bounds.end).getTime() + 1).toISOString();
+  return calculatePeriodBounds(periodInput, nextInstant, timezone);
+}
+
 export function withinBounds(timestamp, bounds) {
   const value = toInstant(timestamp).getTime();
   const beforeEnd = !bounds.end || (bounds.endInclusive

@@ -1,18 +1,47 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readdirSync, readFileSync } from "node:fs";
 import { parseRoute } from "../../js/ui/router.js";
 import { stateAt, action, block, relationship } from "../helpers.js";
 import { getHomeViewModel } from "../../js/application/home.js";
+import { normalizeName } from "../../js/shared/validation.js";
 
 test("domain modules import without DOM globals", async () => {
   const previousDocument = globalThis.document;
   const previousWindow = globalThis.window;
   delete globalThis.document;
   delete globalThis.window;
-  await Promise.all(["targets", "avoid", "cycles", "scheduling", "logs", "relationships"].map((name) => import(`../../js/domain/${name}.js`)));
+  const modules = readdirSync(new URL("../../js/domain/", import.meta.url)).filter((name) => name.endsWith(".js"));
+  await Promise.all(modules.map((name) => import(`../../js/domain/${name}`)));
   assert.equal(globalThis.document, undefined);
   if (previousDocument) globalThis.document = previousDocument;
   if (previousWindow) globalThis.window = previousWindow;
+});
+
+test("domain and application sources have no DOM, storage, network, or hidden clock dependency", () => {
+  for (const directory of ["domain", "application"]) {
+    for (const name of readdirSync(new URL(`../../js/${directory}/`, import.meta.url)).filter((item) => item.endsWith(".js"))) {
+      const source = readFileSync(new URL(`../../js/${directory}/${name}`, import.meta.url), "utf8");
+      assert.doesNotMatch(source, /\bdocument\s*\.|\bwindow\s*\.|globalThis\.(?:document|window|localStorage|indexedDB)|\bHTMLElement\b|\blocalStorage\s*\.|\bindexedDB\s*\.|\bfetch\s*\(|Date\.now\s*\(/, `${directory}/${name} crossed an architecture boundary`);
+    }
+  }
+});
+
+test("module imports enforce Domain and Application dependency direction", () => {
+  for (const name of readdirSync(new URL("../../js/domain/", import.meta.url)).filter((item) => item.endsWith(".js"))) {
+    const source = readFileSync(new URL(`../../js/domain/${name}`, import.meta.url), "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*\/(?:ui|application|infrastructure|import-export)\//, `domain/${name} imports an outer layer`);
+  }
+  for (const name of readdirSync(new URL("../../js/application/", import.meta.url)).filter((item) => item.endsWith(".js"))) {
+    const source = readFileSync(new URL(`../../js/application/${name}`, import.meta.url), "utf8");
+    assert.doesNotMatch(source, /from\s+["'][^"']*\/ui\//, `application/${name} imports the UI`);
+  }
+});
+
+test("SAMT names preserve multilingual text while normalising unsafe whitespace", () => {
+  assert.equal(normalizeName("  صلاة\nالفجر  "), "صلاة الفجر");
+  assert.equal(normalizeName("普通话词汇"), "普通话词汇");
+  assert.equal(normalizeName("Chest\u0000 Training"), "Chest Training");
 });
 
 test("public core entry imports without a browser UI", async () => {
