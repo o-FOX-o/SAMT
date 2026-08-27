@@ -1,4 +1,3 @@
-import { StorageError } from "../shared/errors.js";
 import { deepClone } from "../shared/validation.js";
 import { STATE_KEY, migrationBackupKey, readLocalCandidates, writeLocalMigrationBackup, writeLocalState } from "./local-storage.js";
 import { readIndexedState, writeIndexedTransaction } from "./indexed-db.js";
@@ -14,6 +13,7 @@ function stateTime(candidate) {
 }
 
 function sourcePriority(source = "") {
+  if (source === "memory:session") return 5;
   if (source.startsWith("indexedDB:")) return 4;
   if (source.endsWith(STATE_KEY)) return 3;
   if (source.includes("fallback")) return 2;
@@ -79,10 +79,16 @@ export class LegacyBrowserRepository extends Repository {
     this.indexedDB = indexedDBApi === undefined ? browserCapability("indexedDB") : indexedDBApi;
     this.localStorage = localStorageApi === undefined ? browserCapability("localStorage") : localStorageApi;
     this.logger = logger;
+    this.volatileState = null;
+    this.volatileBackups = new Map();
+    this.storageStatus = { persistent: null, mode: "checking", causes: [] };
   }
+
+  getStatus() { return deepClone(this.storageStatus); }
 
   async load() {
     const candidates = readLocalCandidates(this.localStorage);
+    if (this.volatileState) candidates.push({ source: "memory:session", value: this.volatileState });
     try {
       const value = await readIndexedState(this.indexedDB, STATE_KEY);
       if (value) candidates.push({ source: `indexedDB:${STATE_KEY}`, value });
@@ -94,6 +100,7 @@ export class LegacyBrowserRepository extends Repository {
   async createMigrationBackup(state, { targetVersion = 2 } = {}) {
     if (!state) return;
     const backupKey = migrationBackupKey(targetVersion);
+    if (!this.volatileBackups.has(backupKey)) this.volatileBackups.set(backupKey, deepClone(state));
     let saved = false;
     const failures = [];
     try { writeLocalMigrationBackup(this.localStorage, state, backupKey); saved = Boolean(this.localStorage); } catch (error) { failures.push(error); }
@@ -103,22 +110,37 @@ export class LegacyBrowserRepository extends Repository {
       saved = true;
     }
     catch (error) { failures.push(error); }
-    if (!saved) throw new StorageError("Could not create a pre-migration backup.", { causes: failures.map((error) => error.message) });
+    if (!saved) {
+      this.storageStatus = { persistent: false, mode: "memory", causes: failures.map((error) => error.message) };
+      this.logger?.debug("Storage", "Persistent migration backup unavailable; the original persistent state remains untouched and a session copy was retained.", { causes: failures.map((error) => error.message) });
+      return;
+    }
     if (failures.length) this.logger?.debug("Storage", "One backup adapter was unavailable; another retained the backup.", { causes: failures.map((error) => error.message) });
   }
 
   async save(state, previous = null) {
     const snapshot = deepClone(state);
     let saved = false;
+    let indexedSaved = false;
+    let localSaved = false;
     const failures = [];
     try {
       await writeIndexedTransaction(this.indexedDB, [[STATE_KEY, snapshot]]);
       saved = true;
+      indexedSaved = true;
     } catch (error) { failures.push(error); }
-    try { writeLocalState(this.localStorage, snapshot, previous); saved = saved || Boolean(this.localStorage); }
+    try {
+      writeLocalState(this.localStorage, snapshot, previous);
+      localSaved = Boolean(this.localStorage);
+      saved = saved || localSaved;
+    }
     catch (error) { failures.push(error); }
-    if (!saved) throw new StorageError("Could not persist SAMT state.", { causes: failures.map((error) => error.message) });
-    if (failures.length) this.logger?.debug("Storage", "One storage adapter was unavailable; another committed the state.", { causes: failures.map((error) => error.message) });
+    this.volatileState = snapshot;
+    this.storageStatus = saved
+      ? { persistent: true, mode: indexedSaved && localSaved ? "redundant" : indexedSaved ? "indexeddb" : "localstorage", causes: failures.map((error) => error.message) }
+      : { persistent: false, mode: "memory", causes: failures.map((error) => error.message) };
+    if (!saved) this.logger?.debug("Storage", "Persistent browser storage unavailable; SAMT is continuing in session mode.", { causes: failures.map((error) => error.message) });
+    if (saved && failures.length) this.logger?.debug("Storage", "One storage adapter was unavailable; another committed the state.", { causes: failures.map((error) => error.message) });
     return snapshot;
   }
 

@@ -204,6 +204,16 @@ h3 { font-size: 1.05rem; line-height: 1.3; }
 .status-dot { inline-size: 0.55rem; block-size: 0.55rem; border-radius: 50%; background: currentColor; }
 .code-box { overflow: auto; max-height: 18rem; padding: var(--space-4); background: var(--surface-alt); border-radius: var(--radius-sm); font: 0.83rem/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
 .danger-zone { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); }
+.storage-notice {
+  width: min(calc(100% - 2 * var(--space-4)), var(--content));
+  margin: var(--space-3) auto 0;
+  padding: var(--space-3) var(--space-4);
+  color: var(--text);
+  background: color-mix(in srgb, var(--warning) 12%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--border));
+  border-radius: var(--radius);
+}
+.first-use { border-color: color-mix(in srgb, var(--primary) 60%, var(--border)); }
 
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); min-width: 0; }
 .field { display: grid; gap: var(--space-2); min-width: 0; }
@@ -364,7 +374,7 @@ function renderRoute() {
     else if (route.name === "history") content = renderHistoryView(engine.queries.getState().history);
     else if (route.name === "settings") content = renderSettingsView(engine.queries.getState());
     else content = '<main class="page-shell"><div class="empty"><h1>Page not found</h1><a class="btn" href="#/">Return Home</a></div></main>';
-    appRoot.innerHTML = renderShell(route, content);
+    appRoot.innerHTML = renderShell(route, content, { storageStatus: repository.getStatus() });
     document.querySelector("[data-edit-block-form]")?.addEventListener("submit", saveBlockForm);
   } catch (error) { showError(error); }
 }
@@ -3182,7 +3192,15 @@ function getHomeViewModel(state, { now, timezone }) {
   }
   const recentActionIds = [...state.actionLogs].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp)).map((item) => item.actionId);
   const quickLog = [...new Set(recentActionIds.concat(state.actions.filter((item) => item.status === "active").map((item) => item.id)))].map((id) => getActionById(state, id)).filter(Boolean);
-  return { now, nowChoices, running, due: { overdue, dueNow, laterToday }, available, avoid, today, thisWeek, currentProject: currentProjectView(state, now), upcoming, quickLog };
+  const firstUse = state.actions.length === 0 && state.blocks.length === 0
+    ? {
+        title: "Build your SAMT system",
+        message: "SAMT is ready. Create your first Action or Block; importing JSON is optional.",
+        canCreateAction: true,
+        canCreateBlock: true
+      }
+    : null;
+  return { now, nowChoices, running, due: { overdue, dueNow, laterToday }, available, avoid, today, thisWeek, currentProject: currentProjectView(state, now), upcoming, quickLog, firstUse };
 }
 
 exports["getHomeViewModel"] = getHomeViewModel;
@@ -3972,7 +3990,6 @@ exports["SystemClock"] = SystemClock;
 exports["FakeClock"] = FakeClock;
 },
 "js/infrastructure/repository.js": function(module, exports, require) {
-const { StorageError } = require("js/shared/errors.js");
 const { deepClone } = require("js/shared/validation.js");
 const { STATE_KEY, migrationBackupKey, readLocalCandidates, writeLocalMigrationBackup, writeLocalState } = require("js/infrastructure/local-storage.js");
 const { readIndexedState, writeIndexedTransaction } = require("js/infrastructure/indexed-db.js");
@@ -3988,6 +4005,7 @@ function stateTime(candidate) {
 }
 
 function sourcePriority(source = "") {
+  if (source === "memory:session") return 5;
   if (source.startsWith("indexedDB:")) return 4;
   if (source.endsWith(STATE_KEY)) return 3;
   if (source.includes("fallback")) return 2;
@@ -4053,10 +4071,16 @@ class LegacyBrowserRepository extends Repository {
     this.indexedDB = indexedDBApi === undefined ? browserCapability("indexedDB") : indexedDBApi;
     this.localStorage = localStorageApi === undefined ? browserCapability("localStorage") : localStorageApi;
     this.logger = logger;
+    this.volatileState = null;
+    this.volatileBackups = new Map();
+    this.storageStatus = { persistent: null, mode: "checking", causes: [] };
   }
+
+  getStatus() { return deepClone(this.storageStatus); }
 
   async load() {
     const candidates = readLocalCandidates(this.localStorage);
+    if (this.volatileState) candidates.push({ source: "memory:session", value: this.volatileState });
     try {
       const value = await readIndexedState(this.indexedDB, STATE_KEY);
       if (value) candidates.push({ source: `indexedDB:${STATE_KEY}`, value });
@@ -4068,6 +4092,7 @@ class LegacyBrowserRepository extends Repository {
   async createMigrationBackup(state, { targetVersion = 2 } = {}) {
     if (!state) return;
     const backupKey = migrationBackupKey(targetVersion);
+    if (!this.volatileBackups.has(backupKey)) this.volatileBackups.set(backupKey, deepClone(state));
     let saved = false;
     const failures = [];
     try { writeLocalMigrationBackup(this.localStorage, state, backupKey); saved = Boolean(this.localStorage); } catch (error) { failures.push(error); }
@@ -4077,22 +4102,37 @@ class LegacyBrowserRepository extends Repository {
       saved = true;
     }
     catch (error) { failures.push(error); }
-    if (!saved) throw new StorageError("Could not create a pre-migration backup.", { causes: failures.map((error) => error.message) });
+    if (!saved) {
+      this.storageStatus = { persistent: false, mode: "memory", causes: failures.map((error) => error.message) };
+      this.logger?.debug("Storage", "Persistent migration backup unavailable; the original persistent state remains untouched and a session copy was retained.", { causes: failures.map((error) => error.message) });
+      return;
+    }
     if (failures.length) this.logger?.debug("Storage", "One backup adapter was unavailable; another retained the backup.", { causes: failures.map((error) => error.message) });
   }
 
   async save(state, previous = null) {
     const snapshot = deepClone(state);
     let saved = false;
+    let indexedSaved = false;
+    let localSaved = false;
     const failures = [];
     try {
       await writeIndexedTransaction(this.indexedDB, [[STATE_KEY, snapshot]]);
       saved = true;
+      indexedSaved = true;
     } catch (error) { failures.push(error); }
-    try { writeLocalState(this.localStorage, snapshot, previous); saved = saved || Boolean(this.localStorage); }
+    try {
+      writeLocalState(this.localStorage, snapshot, previous);
+      localSaved = Boolean(this.localStorage);
+      saved = saved || localSaved;
+    }
     catch (error) { failures.push(error); }
-    if (!saved) throw new StorageError("Could not persist SAMT state.", { causes: failures.map((error) => error.message) });
-    if (failures.length) this.logger?.debug("Storage", "One storage adapter was unavailable; another committed the state.", { causes: failures.map((error) => error.message) });
+    this.volatileState = snapshot;
+    this.storageStatus = saved
+      ? { persistent: true, mode: indexedSaved && localSaved ? "redundant" : indexedSaved ? "indexeddb" : "localstorage", causes: failures.map((error) => error.message) }
+      : { persistent: false, mode: "memory", causes: failures.map((error) => error.message) };
+    if (!saved) this.logger?.debug("Storage", "Persistent browser storage unavailable; SAMT is continuing in session mode.", { causes: failures.map((error) => error.message) });
+    if (saved && failures.length) this.logger?.debug("Storage", "One storage adapter was unavailable; another committed the state.", { causes: failures.map((error) => error.message) });
     return snapshot;
   }
 
@@ -4346,6 +4386,13 @@ function focusable(container) {
   return [...container.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"]')].filter((element) => !element.hidden);
 }
 
+function modalMarkup({ title, body, submitLabel = null, cancelLabel = "Cancel", destructive = false, dismissible = true, wide = false }) {
+  const headerClose = dismissible && submitLabel
+    ? '<button type="button" class="btn btn-ghost btn-small" data-modal-close aria-label="Close dialog">Close</button>'
+    : "";
+  return `<section class="modal-dialog ${wide ? "modal-dialog-wide" : ""}" role="dialog" aria-modal="true" aria-labelledby="global-modal-title" tabindex="-1"><form data-modal-form><div class="modal-head"><div><h2 id="global-modal-title">${escapeHtml(title)}</h2></div>${headerClose}</div><div class="stack" data-modal-body>${body}</div><div class="modal-actions"><button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(cancelLabel)}</button>${submitLabel ? `<button type="submit" class="btn ${destructive ? "btn-danger" : "btn-primary"}">${escapeHtml(submitLabel)}</button>` : ""}</div></form></section>`;
+}
+
 class ModalManager {
   constructor(root) { this.root = root; this.active = null; this.opener = null; this.keyHandler = null; }
 
@@ -4369,7 +4416,7 @@ class ModalManager {
     return new Promise((resolve) => {
       const backdrop = document.createElement("div");
       backdrop.className = "modal-backdrop";
-      backdrop.innerHTML = `<section class="modal-dialog ${wide ? "modal-dialog-wide" : ""}" role="dialog" aria-modal="true" aria-labelledby="global-modal-title"><form data-modal-form><div class="modal-head"><div><h2 id="global-modal-title">${escapeHtml(title)}</h2></div>${dismissible ? '<button type="button" class="btn btn-ghost btn-small" data-modal-close aria-label="Close dialog">Close</button>' : ""}</div><div class="stack" data-modal-body>${body}</div><div class="modal-actions"><button type="button" class="btn btn-ghost" data-modal-close>${escapeHtml(cancelLabel)}</button>${submitLabel ? `<button type="submit" class="btn ${destructive ? "btn-danger" : "btn-primary"}">${escapeHtml(submitLabel)}</button>` : ""}</div></form></section>`;
+      backdrop.innerHTML = modalMarkup({ title, body, submitLabel, cancelLabel, destructive, dismissible, wide });
       this.root.replaceChildren(backdrop);
       this.active = { resolve, backdrop };
       backdrop.addEventListener("click", (event) => {
@@ -4400,13 +4447,17 @@ class ModalManager {
   }
 }
 
+exports["modalMarkup"] = modalMarkup;
 exports["ModalManager"] = ModalManager;
 },
 "js/ui/shell.js": function(module, exports, require) {
 const { brandMarkup, desktopNavigation, mobileNavigation } = require("js/ui/navigation.js");
 
-function renderShell(route, content) {
-  return `<div class="app-shell"><header class="app-header">${brandMarkup()}${desktopNavigation(route)}<div class="header-actions"><button class="btn btn-primary btn-small" data-action="quick-log">+ Log</button></div></header>${content}${mobileNavigation(route)}</div>`;
+function renderShell(route, content, { storageStatus = null } = {}) {
+  const storageNotice = storageStatus?.persistent === false
+    ? '<aside class="storage-notice" role="status"><strong>Temporary session mode.</strong> This browser is blocking permanent storage. SAMT still works, but export a Full Backup before closing this page.</aside>'
+    : "";
+  return `<div class="app-shell"><header class="app-header">${brandMarkup()}${desktopNavigation(route)}<div class="header-actions"><button class="btn btn-primary btn-small" data-action="quick-log">+ Log</button></div></header>${storageNotice}${content}${mobileNavigation(route)}</div>`;
 }
 
 exports["renderShell"] = renderShell;
@@ -4433,8 +4484,11 @@ function avoidRows(items) {
 
 function renderHomeView(model) {
   const nowText = model.nowChoices.length ? model.nowChoices.map((item) => escapeHtml(item.label)).join(" · ") : "Nothing is demanding attention.";
+  const firstUse = model.firstUse
+    ? `<section class="card section first-use"><span class="eyebrow">Ready to use</span><h2>${escapeHtml(model.firstUse.title)}</h2><p class="muted">${escapeHtml(model.firstUse.message)}</p><div class="inline"><button class="btn btn-primary" data-action="new-action">Create first Action</button><button class="btn" data-action="new-block">Create first Block</button></div></section>`
+    : "";
   const project = model.currentProject ? `<section class="card section"><div class="section-head"><div><span class="eyebrow">Primary project</span><h2><a href="#/blocks/${encodeURIComponent(model.currentProject.id)}">${escapeHtml(model.currentProject.name)}</a></h2></div>${model.currentProject.overdue ? badge("overdue") : model.currentProject.runningRunId ? badge("running") : badge(model.currentProject.status)}</div>${model.currentProject.progress?.percentage != null ? `<div class="progress" aria-label="${Math.round(model.currentProject.progress.percentage)} percent"><span style="--progress:${Math.min(100, model.currentProject.progress.percentage)}%"></span></div>` : ""}</section>` : "";
-  return `<main class="page-shell"><header class="page-head"><div class="page-head-copy"><span class="eyebrow">Today</span><h1>Your next move</h1><p class="muted">${nowText}</p></div><div class="inline"><button class="btn btn-primary" data-action="quick-log">+ Log</button><a class="btn" href="#/action-lists">Open Action Lists</a></div></header><div class="summary-strip"><div class="metric"><span class="muted">Due now</span><strong class="metric-value">${model.due.dueNow.length}</strong></div><div class="metric"><span class="muted">Overdue</span><strong class="metric-value">${model.due.overdue.length}</strong></div><div class="metric"><span class="muted">Running</span><strong class="metric-value">${model.running.length}</strong></div></div>${project}<div class="home-layout section"><div class="stack"><section class="card"><div class="section-head"><h2>Due</h2><span class="badge">${model.due.overdue.length + model.due.dueNow.length + model.due.laterToday.length}</span></div>${occurrenceRows([...model.due.overdue, ...model.due.dueNow, ...model.due.laterToday])}</section><section class="card"><div class="section-head"><h2>Avoid</h2></div>${avoidRows(model.avoid)}</section></div><div class="stack"><section class="card"><div class="section-head"><h2>Today</h2></div>${targetRows(model.today)}</section><section class="card"><div class="section-head"><h2>This week</h2></div>${targetRows(model.thisWeek)}</section><section class="card"><div class="section-head"><h2>Upcoming</h2></div>${occurrenceRows(model.upcoming)}</section></div></div></main>`;
+  return `<main class="page-shell"><header class="page-head"><div class="page-head-copy"><span class="eyebrow">Today</span><h1>Your next move</h1><p class="muted">${nowText}</p></div><div class="inline"><button class="btn btn-primary" data-action="quick-log">+ Log</button><a class="btn" href="#/action-lists">Open Action Lists</a></div></header>${firstUse}<div class="summary-strip"><div class="metric"><span class="muted">Due now</span><strong class="metric-value">${model.due.dueNow.length}</strong></div><div class="metric"><span class="muted">Overdue</span><strong class="metric-value">${model.due.overdue.length}</strong></div><div class="metric"><span class="muted">Running</span><strong class="metric-value">${model.running.length}</strong></div></div>${project}<div class="home-layout section"><div class="stack"><section class="card"><div class="section-head"><h2>Due</h2><span class="badge">${model.due.overdue.length + model.due.dueNow.length + model.due.laterToday.length}</span></div>${occurrenceRows([...model.due.overdue, ...model.due.dueNow, ...model.due.laterToday])}</section><section class="card"><div class="section-head"><h2>Avoid</h2></div>${avoidRows(model.avoid)}</section></div><div class="stack"><section class="card"><div class="section-head"><h2>Today</h2></div>${targetRows(model.today)}</section><section class="card"><div class="section-head"><h2>This week</h2></div>${targetRows(model.thisWeek)}</section><section class="card"><div class="section-head"><h2>Upcoming</h2></div>${occurrenceRows(model.upcoming)}</section></div></div></main>`;
 }
 
 exports["renderHomeView"] = renderHomeView;

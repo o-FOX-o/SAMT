@@ -109,5 +109,13 @@ export function getHomeViewModel(state, { now, timezone }) {
   }
   const recentActionIds = [...state.actionLogs].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp)).map((item) => item.actionId);
   const quickLog = [...new Set(recentActionIds.concat(state.actions.filter((item) => item.status === "active").map((item) => item.id)))].map((id) => getActionById(state, id)).filter(Boolean);
-  return { now, nowChoices, running, due: { overdue, dueNow, laterToday }, available, avoid, today, thisWeek, currentProject: currentProjectView(state, now), upcoming, quickLog };
+  const firstUse = state.actions.length === 0 && state.blocks.length === 0
+    ? {
+        title: "Build your SAMT system",
+        message: "SAMT is ready. Create your first Action or Block; importing JSON is optional.",
+        canCreateAction: true,
+        canCreateBlock: true
+      }
+    : null;
+  return { now, nowChoices, running, due: { overdue, dueNow, laterToday }, available, avoid, today, thisWeek, currentProject: currentProjectView(state, now), upcoming, quickLog, firstUse };
 }
