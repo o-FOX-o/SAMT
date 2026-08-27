@@ -7,6 +7,8 @@ import { createActionLog, aggregateLogsUnique } from "../js/domain/logs.js";
 import { createTargetConfig, calculateTargetProgress } from "../js/domain/targets.js";
 import { evaluateAvoidPeriod } from "../js/domain/avoid.js";
 import { generateSmallCycle, createBigCycleRuntime, generateNextSmallCycle, recordCycleResolution } from "../js/domain/cycles.js";
+import { createOccurrence, resolveOccurrenceStatus } from "../js/domain/occurrences.js";
+import { calculatePeriodBounds } from "../js/shared/dates.js";
 
 const now = new Date("2026-01-01T10:00:00Z");
 
@@ -50,6 +52,16 @@ test("Avoid binary zero, multiplier and scored anchors", () => {
   assert.equal(evaluateAvoidPeriod({ mode: "scored_range", actual: 240, anchors: [{ actual: 0, score: 200 }, { actual: 120, score: 100 }, { actual: 360, score: 0 }, { actual: 540, score: -25 }] }).score, 50);
 });
 
+test("outcome Targets compare structured Results without summing measurements", () => {
+  const field = createResultField({ id: "result_body_weight", type: "measurement", label: "Body Weight", config: { defaultUnitId: "unit_kg", allowedUnitIds: ["unit_kg", "unit_g"] }, now });
+  const action = createAction({ id: "action_weight", name: "Weigh In", resultFields: [field], now }, { units: BUILTIN_UNITS });
+  const first = createActionLog({ id: "log_weight_1", action, eventAt: "2026-01-01T08:00:00Z", resultValues: [{ fieldId: field.id, value: { value: 72000, unitId: "unit_g" } }], now, units: BUILTIN_UNITS });
+  const second = createActionLog({ id: "log_weight_2", action, eventAt: "2026-01-02T08:00:00Z", resultValues: [{ fieldId: field.id, value: { value: 71, unitId: "unit_kg" } }], now, units: BUILTIN_UNITS });
+  const target = { id: "target_weight", config: createTargetConfig({ mode: "outcome", sourceActionIds: [action.id], sourceResultFieldId: field.id, aggregation: "latest", comparison: "<=", targetValue: 70, unitId: "unit_kg" }) };
+  const progress = calculateTargetProgress({ target, logs: [first, second], resultField: field, units: BUILTIN_UNITS });
+  assert.equal(progress.actual, 71); assert.equal(progress.reached, false); assert.equal(progress.analysis.count, 2);
+});
+
 test("weighted cycles are deterministic and big-cycle coverage is separate from completion", () => {
   const relationships = [
     { id: "a", appearanceMode: "weighted", weight: 10 }, { id: "b", appearanceMode: "weighted", weight: 7 },
@@ -63,4 +75,19 @@ test("weighted cycles are deterministic and big-cycle coverage is separate from 
   const afterSkip = recordCycleResolution({ bigCycle: big, smallCycle: generated, relationshipId: generated.slots[0].relationshipId, outcome: "skipped" });
   assert.equal(afterSkip.completionCoverage.includes(generated.slots[0].relationshipId), false);
   assert.equal(afterSkip.appearanceCoverage.includes(generated.slots[0].relationshipId), true);
+});
+
+test("multiple factual logs can complete one occurrence without merging logs", () => {
+  const action = createAction({ id: "action_split", name: "Mandarin", completion: { method: "time", minimumMinutes: 15 }, now });
+  const occurrence = createOccurrence({ id: "occ_split", relationshipId: "rel_split", deadline: "2026-01-01T23:59:00Z", logIds: ["log_a", "log_b"], now });
+  const logs = [{ id: "log_a", durationMinutes: 8 }, { id: "log_b", durationMinutes: 7 }];
+  assert.equal(resolveOccurrenceStatus({ occurrence, logs, action, now }).toString(), "completed");
+  assert.equal(logs.length, 2);
+});
+
+test("period bounds use explicit local timezone and distinguish rolling windows", () => {
+  const calendar = calculatePeriodBounds({ period: "day", at: "2026-03-29T01:30:00Z", timezone: "Europe/London" });
+  const rolling = calculatePeriodBounds({ period: "week", style: "rolling", at: "2026-03-29T12:00:00Z", timezone: "Europe/London" });
+  assert.equal(new Date(calendar.start).toISOString(), "2026-03-29T00:00:00.000Z");
+  assert.equal(Math.round((new Date(rolling.end) - new Date(rolling.start)) / 3600000), 168);
 });

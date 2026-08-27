@@ -36,3 +36,12 @@ export function isActionCompletionAchieved({ action, log } = {}) {
 export function snapshotActionForLog(action) {
   return { id: action.id, name: action.name, direction: action.direction, completion: clone(action.completion), resultFields: (action.resultFields || []).map((field) => ({ id: field.id, definitionVersion: field.definitionVersion, type: field.type, label: field.label, config: clone(field.config), required: field.required })) };
 }
+
+export function versionResultFields(previous = [], next = [], now = new Date()) {
+  const oldById = new Map(previous.map((field) => [field.id, field])); const stamp = new Date(now).toISOString();
+  return next.map((field) => {
+    const old = oldById.get(field.id); if (!old) return { ...clone(field), definitionVersion: Math.max(1, Number(field.definitionVersion) || 1), updatedAt: stamp };
+    const changed = JSON.stringify({ ...old, updatedAt: undefined }) !== JSON.stringify({ ...field, updatedAt: undefined });
+    return { ...clone(field), definitionVersion: changed ? Math.max(Number(old.definitionVersion) || 1, Number(field.definitionVersion) || 1) + 1 : Number(old.definitionVersion) || 1, createdAt: old.createdAt || field.createdAt || stamp, updatedAt: stamp };
+  });
+}

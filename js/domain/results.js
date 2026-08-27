@@ -38,7 +38,7 @@ export function validateResultFields(fields = [], units = []) {
       if (config.allowedUnitIds.some((id) => !map.has(id) || config.defaultUnitId && !isCompatible(id, config.defaultUnitId, units))) throw new ValidationError("Measurement Units must be compatible.");
     }
     if (field.type === "choice") {
-      const options = normalizeResultConfig(field).options; assertUnique(options, (option) => option.id, "Choice option ID");
+      const options = normalizeResultConfig(field).options; assertUnique(options, (option) => option.id, "Choice option ID"); assertUnique(options, (option) => option.position, "Choice option position");
     }
   }
   return true;
@@ -76,15 +76,29 @@ export function snapshotResultValue(field, value, units = []) {
   return snapshot;
 }
 
-export function analyzeResultValues({ field, values = [], units = [], operation = null } = {}) {
+export function analyzeResultValues({ field, values = [], units = [], operation = null, targetUnitId = null } = {}) {
   const config = normalizeResultConfig(field); const rows = values.filter((value) => value !== undefined && value !== null);
   if (!rows.length) return { count: 0, value: null, values: [] };
   if (field.type === "text") { const normalized = rows.map((value) => String(value)); const counts = Object.fromEntries([...new Set(normalized.map((value) => value.trim().toLocaleLowerCase()))].map((key) => [key, normalized.filter((value) => value.trim().toLocaleLowerCase() === key).length])); return { count: rows.length, value: normalized.at(-1), unique: Object.keys(counts).length, frequencies: counts, values: normalized }; }
   if (field.type === "choice") { const all = config.mode === "multiple" ? rows.flat() : rows; const frequencies = {}; for (const value of all) frequencies[value] = (frequencies[value] || 0) + 1; const scores = all.map((id) => config.options.find((option) => option.id === id)?.analysisScore).filter((score) => score != null); return { count: rows.length, value: rows.at(-1), frequencies, percentage: Object.fromEntries(Object.entries(frequencies).map(([key, count]) => [key, count / all.length * 100])), ordinalAverage: config.orderMatters ? all.map((id) => config.options.find((option) => option.id === id)?.position).filter(Number.isFinite).reduce((sum, value, _, array) => sum + value / array.length, 0) : null, numericAverage: scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : null }; }
-  const numeric = field.type === "measurement" ? rows.map((entry) => entry.value) : rows.map(Number);
+  const numeric = field.type === "measurement" ? rows.map((entry) => {
+    const unitId = entry?.unitId || config.defaultUnitId; return targetUnitId && unitId ? convertValue(entry.value, unitId, targetUnitId, units) : Number(entry.value);
+  }) : rows.map(Number);
   if (field.type === "measurement" && operation === "total") return { count: rows.length, value: numeric.reduce((sum, value) => sum + value, 0) };
   const valuesSorted = [...numeric].sort((a, b) => a - b); const latest = numeric.at(-1); const average = numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
   return { count: numeric.length, value: operation === "latest" ? latest : operation === "min" ? valuesSorted[0] : operation === "max" ? valuesSorted.at(-1) : average, latest, min: valuesSorted[0], max: valuesSorted.at(-1), average, change: latest - numeric[0] };
 }
 
 export function normalizeForTextAnalysis(value) { return String(value ?? "").trim().toLocaleLowerCase(); }
+
+export function choiceRank(field, optionId) {
+  const option = normalizeResultConfig(field).options.find((candidate) => candidate.id === optionId);
+  return option ? option.position : null;
+}
+
+export function compareChoice(field, leftOptionId, rightOptionId) {
+  const config = normalizeResultConfig(field); if (!config.orderMatters) return null;
+  const left = choiceRank(field, leftOptionId); const right = choiceRank(field, rightOptionId); if (left == null || right == null) return null;
+  const direction = config.betterDirection === "lower" ? -1 : 1;
+  return (left - right) * direction;
+}

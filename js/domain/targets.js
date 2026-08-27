@@ -36,11 +36,8 @@ export function calculateTargetProgress({ target, logs = [], period = null, acti
   } else {
     if (!resultField) throw new InvalidTargetError("Outcome Target requires a source Result Field.");
     const values = selected.flatMap((log) => (log.resultValues || []).filter((entry) => entry.fieldId === resultField.id).map((entry) => entry.value));
-    analysis = analyzeResultValues({ field: resultField, values, units, operation: config.aggregation });
+    analysis = analyzeResultValues({ field: resultField, values, units, operation: config.aggregation, targetUnitId: config.unitId || null });
     actual = analysis.value;
-    if (resultField.type === "measurement" && actual != null && config.unitId) {
-      const last = selected.at(-1)?.resultValues?.find((entry) => entry.fieldId === resultField.id); if (last?.value?.unitId) actual = convertValue(actual, last.value.unitId, config.unitId, units);
-    }
     if (typeof actual !== "number") actual = finiteNumber(actual, 0);
   }
   const reachedOwn = compareValues(actual, config.comparison || ">=", finiteNumber(config.targetValue, 0));

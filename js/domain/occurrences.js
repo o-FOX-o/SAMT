@@ -20,7 +20,13 @@ export function aggregateOccurrenceProgress({ occurrence, logs = [], action = nu
 export function resolveOccurrenceStatus({ occurrence, logs = [], action = null, now = new Date(), unfinishedPolicy = "expire" } = {}) {
   if (["completed", "skipped", "excused", "not_applicable"].includes(occurrence.status)) return occurrence.status;
   const progress = aggregateOccurrenceProgress({ occurrence, logs, action });
-  if (progress.completed) return "completed";
+  if (action) {
+    const completion = action.completion || {};
+    const qualifies = completion.method === "quantity"
+      ? progress.quantity >= Number(completion.target || 1)
+      : progress.durationMinutes > 0 && progress.durationMinutes >= Number(completion.minimumMinutes || 0);
+    if (qualifies) return "completed";
+  } else if (progress.completed) return "completed";
   const available = !occurrence.availableFrom || new Date(now) >= new Date(occurrence.availableFrom);
   const deadlinePassed = occurrence.deadline && new Date(now) >= new Date(occurrence.deadline);
   if (deadlinePassed) return unfinishedPolicy === "carry_forward" ? "overdue" : unfinishedPolicy === "stay_overdue" ? "overdue" : progress.logIds.length ? "partial" : "missed";

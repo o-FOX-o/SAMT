@@ -5,7 +5,7 @@ import { clone } from "../shared/validation.js";
 
 export function createPeriod({ id = null, ownerId, period = "day", at, timezone = "UTC", weekStartsOn = 1, style = "calendar", customStart = null, customEnd = null, status = "open", snapshot = {}, now = new Date() } = {}) {
   if (!ownerId) throw new ValidationError("Period requires an owner.");
-  const bounds = calculatePeriodBounds({ period, at, timezone, weekStartsOn, customStart, customEnd });
+  const bounds = calculatePeriodBounds({ period, style, at, timezone, weekStartsOn, customStart, customEnd });
   return { id: id || createId("period", now), ownerId, period, style, timezone, weekStartsOn, start: bounds.start, end: bounds.end, key: bounds.key, status, snapshot: clone(snapshot) || {}, openedAt: new Date(now).toISOString(), closedAt: null, evaluation: null };
 }
 

@@ -73,11 +73,11 @@ export function generateNextSmallCycle({ bigCycle, relationships = [], now = new
   return { ...small, bigCycleId: bigCycle.id, smallCycleNumber: bigCycle.smallCycles.length + 1 };
 }
 
-export function recordCycleResolution({ bigCycle, smallCycle, relationshipId, outcome = "completed" } = {}) {
+export function recordCycleResolution({ bigCycle, smallCycle, relationshipId, outcome = "completed", now = new Date() } = {}) {
   const appearanceCoverage = [...new Set([...(bigCycle.appearanceCoverage || []), relationshipId])];
   const completionCoverage = outcome === "completed" ? [...new Set([...(bigCycle.completionCoverage || []), relationshipId])] : [...(bigCycle.completionCoverage || [])];
-  const updated = { ...bigCycle, appearanceCoverage, completionCoverage, fairness: clone(smallCycle.fairness) || bigCycle.fairness, smallCycles: [...(bigCycle.smallCycles || []), { id: smallCycle.id, relationshipId, outcome, resolvedAt: new Date().toISOString() }] };
-  if (updated.participantRelationshipIds.every((id) => appearanceCoverage.includes(id))) { updated.status = "completed"; updated.completedAt = new Date().toISOString(); }
+  const updated = { ...bigCycle, appearanceCoverage, completionCoverage, fairness: clone(smallCycle.fairness) || bigCycle.fairness, smallCycles: [...(bigCycle.smallCycles || []), { id: smallCycle.id, relationshipId, outcome, resolvedAt: new Date(now).toISOString() }] };
+  if (updated.participantRelationshipIds.every((id) => appearanceCoverage.includes(id))) { updated.status = "completed"; updated.completedAt = new Date(now).toISOString(); }
   return updated;
 }
 

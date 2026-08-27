@@ -62,8 +62,17 @@ export function startOfLocalMonth(value, timezone = "UTC") {
 }
 
 export function calculatePeriodBounds({ period = "day", at, timezone = "UTC", weekStartsOn = 1,
-  customStart = null, customEnd = null } = {}) {
+  style = "calendar", customStart = null, customEnd = null } = {}) {
   const current = asDate(at);
+  const rollingMatch = String(period).match(/^rolling[_-]?(\d+)[_-]?days?$/i);
+  if (rollingMatch) {
+    const days = Math.max(1, Number(rollingMatch[1])); const end = current; const start = new Date(end.getTime() - days * DAY_MS);
+    return { start: start.toISOString(), end: end.toISOString(), key: `rolling-${days}:${end.toISOString()}` };
+  }
+  if (style === "rolling" && ["day", "week", "month"].includes(period)) {
+    const days = period === "day" ? 1 : period === "week" ? 7 : 30; const end = current; const start = new Date(end.getTime() - days * DAY_MS);
+    return { start: start.toISOString(), end: end.toISOString(), key: `rolling-${days}:${end.toISOString()}` };
+  }
   if (period === "session" || period === "all_time") return { start: null, end: null, key: period };
   if (period === "custom") {
     if (!customStart || !customEnd) throw new InvalidScheduleError("Custom periods require start and end.");
