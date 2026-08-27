@@ -15,11 +15,24 @@ export function createUnit({ id = null, name, symbol, dimension, baseUnitId = nu
   if (!dimension || typeof dimension !== "string") throw new ValidationError("Unit dimension is required.");
   if (!Number.isFinite(Number(factor)) || Number(factor) <= 0) throw new ValidationError("Unit conversion factor must be positive.");
   if (!Number.isInteger(Number(decimalPrecision)) || Number(decimalPrecision) < 0 || Number(decimalPrecision) > 10) throw new ValidationError("Unit precision is invalid.");
+  if (!["active", "archived"].includes(status)) throw new ValidationError("Unit status is invalid.");
   const stamp = new Date(now).toISOString();
   return { id: id || createId("unit", now), name: requireName(name, "Unit name"), symbol: requireName(symbol || name, "Unit symbol"), dimension, baseUnitId: baseUnitId || null, factor: Number(factor), decimalPrecision: Number(decimalPrecision), status, builtIn: false, createdAt: stamp, updatedAt: stamp };
 }
 
 export function unitMap(units = []) { return new Map([...BUILTIN_UNITS, ...units].map((unit) => [unit.id, unit])); }
+export function validateUnits(units = []) {
+  const ids = new Set(); const names = new Set(); const symbols = new Set(); const builtins = new Map(BUILTIN_UNITS.map((unit) => [unit.id, unit])); const map = unitMap(units);
+  for (const unit of units) {
+    if (!unit?.id || ids.has(unit.id) || builtins.has(unit.id) && !unit.builtIn) throw new ValidationError("Unit IDs must be stable and unique.");
+    if (!unit.name || names.has(String(unit.name).toLocaleLowerCase()) || symbols.has(String(unit.symbol).toLocaleLowerCase())) throw new ValidationError("Unit names and symbols must be unique.");
+    if (!Number.isFinite(Number(unit.factor)) || Number(unit.factor) <= 0) throw new ValidationError("Unit conversion factor must be positive.");
+    ids.add(unit.id); names.add(String(unit.name).toLocaleLowerCase()); symbols.add(String(unit.symbol).toLocaleLowerCase());
+    if (unit.baseUnitId && !map.has(unit.baseUnitId)) throw new ValidationError(`Unit ${unit.id} references a missing base Unit.`);
+    if (unit.baseUnitId && map.get(unit.baseUnitId).dimension !== unit.dimension) throw new ValidationError(`Unit ${unit.id} has an incompatible base Unit.`);
+  }
+  return true;
+}
 export function isCompatible(left, right, units = []) {
   const map = unitMap(units); const a = map.get(left?.id || left); const b = map.get(right?.id || right);
   return Boolean(a && b && a.dimension === b.dimension);

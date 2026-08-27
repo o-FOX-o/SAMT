@@ -1,0 +1,2 @@
+export function renderActionListsView(model = {}) { return `<section aria-labelledby="lists-title"><h1 id="lists-title">Action Lists</h1>${(model.blocks || []).filter((block) => block.type === "action_list").map((block) => `<article>${escapeText(block.name)}</article>`).join("") || "<p>No Action Lists.</p>"}</section>`; }
+const escapeText = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));

@@ -33,6 +33,16 @@ export function assertUniqueTaxonomyName(items, name, exceptId = null, label = "
   }
 }
 
+export function archiveCategory(category, now = new Date()) {
+  if (!category?.id) throw new ValidationError("Category is required.");
+  return { ...category, status: "archived", updatedAt: new Date(now).toISOString() };
+}
+
+export function archiveTag(tag, now = new Date()) {
+  if (!tag?.id) throw new ValidationError("Tag is required.");
+  return { ...tag, status: "archived", updatedAt: new Date(now).toISOString() };
+}
+
 export function validateTaxonomy({ categories = [], tags = [] } = {}) {
   const categoryIds = new Set();
   const categoryNames = new Set();

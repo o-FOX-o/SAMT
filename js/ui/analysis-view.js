@@ -1,0 +1,1 @@
+export function renderAnalysisView(model = {}) { return `<section aria-labelledby="analysis-title"><h1 id="analysis-title">Analysis</h1><p>${Number(model.totalMinutes || 0)} minutes · ${model.scope || "GLOBAL_UNIQUE"}</p></section>`; }

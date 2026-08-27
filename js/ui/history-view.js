@@ -1,0 +1,2 @@
+export function renderHistoryView(model = {}) { return `<section aria-labelledby="history-title"><h1 id="history-title">History</h1>${(model.events || []).map((event) => `<article><time>${escapeText(event.timestamp)}</time> ${escapeText(event.description)}</article>`).join("") || "<p>No History.</p>"}</section>`; }
+const escapeText = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));

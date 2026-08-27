@@ -1,0 +1,2 @@
+export function renderBlocksView(model = {}) { return `<section aria-labelledby="blocks-title"><h1 id="blocks-title">Blocks</h1><div>${(model.blocks || []).map((block) => `<article><a data-route="/blocks/${encodeURIComponent(block.id)}">${escapeText(block.name)}</a></article>`).join("") || "<p>No Blocks.</p>"}</div></section>`; }
+const escapeText = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));

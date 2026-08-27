@@ -17,6 +17,8 @@ export function normalizeCompletion(completion = {}) {
 export function createAction({ id = null, name, description = "", tagIds = [], direction = "do", completion = {}, resultFields = [], status = "active", now = new Date() } = {}, context = {}) {
   if (!ACTION_DIRECTIONS.includes(direction)) throw new ValidationError("Action direction is invalid.");
   validateResultFields(resultFields, context.units || []);
+  if (!["active", "archived"].includes(status)) throw new ValidationError("Action status is invalid.");
+  if (context.tags && tagIds.some((tagId) => !context.tags.some((tag) => tag.id === tagId))) throw new ValidationError("Action references a missing Tag.");
   const stamp = new Date(now).toISOString();
   return { id: id || createId("action", now), name: requireName(name, "Action name"), description: String(description || ""), tagIds: [...new Set(tagIds)], direction, completion: normalizeCompletion(completion), resultFields: clone(resultFields) || [], status, createdAt: stamp, updatedAt: stamp };
 }
@@ -24,7 +26,11 @@ export function createAction({ id = null, name, description = "", tagIds = [], d
 export function validateAction(action, context = {}) {
   if (!action?.id || !requireName(action.name, "Action name")) throw new ValidationError("Action is invalid.");
   if (!ACTION_DIRECTIONS.includes(action.direction)) throw new ValidationError("Action direction is invalid.");
-  normalizeCompletion(action.completion); validateResultFields(action.resultFields || [], context.units || []); return true;
+  if (!["active", "archived"].includes(action.status || "active")) throw new ValidationError("Action status is invalid.");
+  normalizeCompletion(action.completion); validateResultFields(action.resultFields || [], context.units || []);
+  if (context.tags && (action.tagIds || []).some((tagId) => !context.tags.some((tag) => tag.id === tagId))) throw new ValidationError("Action references a missing Tag.");
+  if (context.tags && context.categories) for (const field of action.resultFields || []) if (field.resultTagId && !context.tags.some((tag) => tag.id === field.resultTagId && ["result", "both"].includes(tag.scope))) throw new ValidationError("Result Field references an invalid Result Tag.");
+  return true;
 }
 
 export function isActionCompletionAchieved({ action, log } = {}) {

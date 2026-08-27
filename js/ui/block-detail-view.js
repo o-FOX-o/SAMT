@@ -1,0 +1,2 @@
+export function renderBlockDetailView(block = null) { return block ? `<section><h1>${escapeText(block.name)}</h1><p>${escapeText(block.description)}</p><a data-route="/blocks/${encodeURIComponent(block.id)}/edit">Edit definition</a></section>` : "<p>Block not found.</p>"; }
+const escapeText = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));

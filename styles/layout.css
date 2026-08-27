@@ -1,0 +1,1 @@
+.samt-modal{max-width:560px;width:calc(100% - 2rem);margin:10vh auto;padding:1rem;border-radius:var(--samt-radius);background:Canvas;color:CanvasText;box-shadow:0 12px 50px #0006}.samt-modal [data-modal-actions]{display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem}

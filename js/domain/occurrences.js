@@ -13,7 +13,8 @@ export function createOccurrence({ id = null, relationshipId, scheduledAt = null
 }
 
 export function aggregateOccurrenceProgress({ occurrence, logs = [], action = null } = {}) {
-  const selected = logs.filter((log) => occurrence?.logIds?.includes(log.id) || log.contextRefs?.some((ref) => ref.occurrenceId === occurrence?.id));
+  const selected = []; const seen = new Set();
+  for (const log of logs) if (!seen.has(log.id) && (occurrence?.logIds?.includes(log.id) || log.contextRefs?.some((ref) => ref.occurrenceId === occurrence?.id))) { seen.add(log.id); selected.push(log); }
   return { logIds: [...new Set(selected.map((log) => log.id))], durationMinutes: selected.reduce((sum, log) => sum + finiteNumber(log.durationMinutes), 0), quantity: selected.reduce((sum, log) => sum + finiteNumber(log.quantity), 0), completed: action ? selected.some((log) => isActionCompletionAchieved({ action, log })) : false };
 }
 
@@ -21,10 +22,9 @@ export function resolveOccurrenceStatus({ occurrence, logs = [], action = null, 
   if (["completed", "skipped", "excused", "not_applicable"].includes(occurrence.status)) return occurrence.status;
   const progress = aggregateOccurrenceProgress({ occurrence, logs, action });
   if (action) {
-    const completion = action.completion || {};
-    const qualifies = completion.method === "quantity"
-      ? progress.quantity >= Number(completion.target || 1)
-      : progress.durationMinutes > 0 && progress.durationMinutes >= Number(completion.minimumMinutes || 0);
+    // Multiple factual logs may satisfy one occurrence, but the logs remain
+    // separate records. Evaluate the aggregate only for qualification.
+    const qualifies = isActionCompletionAchieved({ action, log: { quantity: progress.quantity, durationMinutes: progress.durationMinutes } });
     if (qualifies) return "completed";
   } else if (progress.completed) return "completed";
   const available = !occurrence.availableFrom || new Date(now) >= new Date(occurrence.availableFrom);

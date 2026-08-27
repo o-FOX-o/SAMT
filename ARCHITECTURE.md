@@ -44,8 +44,10 @@ recalculate business rules in the DOM.
 The reference client retains the existing V2 key
 `life-command-progress-tracker-v2`. The V3 adapter reads a V3 key first and
 otherwise normalises V2/V1 data into a separate V3 state while preserving
-stable IDs, logs, snapshots and the complete source state in `legacy`.
-Writes are best effort. A blocked or unavailable storage implementation never
+stable IDs, logs, snapshots and the complete source state in `legacy`. Before
+the first V3 write it stores the exact source payload in a restore-point key,
+validates the migrated state, then commits the V3 copy. The source V2/V1 key is
+never overwritten. A blocked or unavailable storage implementation never
 prevents startup; it simply keeps the current state in memory. Imports return a
 restore point and are validated before replacement.
 

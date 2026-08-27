@@ -17,3 +17,10 @@ export function isRoutineQualified({ routine, progress } = {}) {
   if (mode === "manual") return false;
   return true;
 }
+
+export function resolveRoutineDeadline({ progress, routine, now = new Date(), deadline = null } = {}) {
+  const qualified = isRoutineQualified({ routine, progress });
+  if (qualified) return { status: "COMPLETED", qualified: true, closedAt: new Date(now).toISOString() };
+  if (deadline && new Date(now) >= new Date(deadline)) return { status: progress?.completed > 0 ? "PARTIAL" : "MISSED", qualified: false, closedAt: new Date(now).toISOString() };
+  return { status: progress?.completed > 0 ? "IN_PROGRESS" : "NOT_STARTED", qualified: false, closedAt: null };
+}

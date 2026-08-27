@@ -1,0 +1,1 @@
+export function bindNavigation(root, router) { root?.addEventListener("click", (event) => { const link = event.target.closest?.("[data-route]"); if (!link) return; event.preventDefault(); router.navigate(link.dataset.route); }); }

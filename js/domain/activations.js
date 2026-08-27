@@ -4,6 +4,8 @@ import { clone } from "../shared/validation.js";
 
 export function createActivation({ id = null, blockId, mode = "manual", recurrence = null, status = "active", now = new Date() } = {}) {
   if (!blockId) throw new ValidationError("Activation requires a Block.");
+  if (!["manual", "run_now", "schedule"].includes(mode)) throw new ValidationError("Activation mode is invalid.");
+  if (!["active", "paused", "archived"].includes(status)) throw new ValidationError("Activation status is invalid.");
   const stamp = new Date(now).toISOString(); return { id: id || createId("activation", now), blockId, mode, recurrence: clone(recurrence), status, startedAt: stamp, pausedAt: null, returnAt: null, createdAt: stamp, updatedAt: stamp };
 }
 

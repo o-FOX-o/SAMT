@@ -3,8 +3,12 @@ import { ValidationError } from "../shared/errors.js";
 import { calculatePeriodBounds } from "../shared/dates.js";
 import { clone } from "../shared/validation.js";
 
+export const PERIOD_STATUSES = ["open", "closed"];
+
 export function createPeriod({ id = null, ownerId, period = "day", at, timezone = "UTC", weekStartsOn = 1, style = "calendar", customStart = null, customEnd = null, status = "open", snapshot = {}, now = new Date() } = {}) {
   if (!ownerId) throw new ValidationError("Period requires an owner.");
+  if (!PERIOD_STATUSES.includes(status)) throw new ValidationError("Period status is invalid.");
+  if (!["calendar", "rolling"].includes(style)) throw new ValidationError("Period style is invalid.");
   const bounds = calculatePeriodBounds({ period, style, at, timezone, weekStartsOn, customStart, customEnd });
   return { id: id || createId("period", now), ownerId, period, style, timezone, weekStartsOn, start: bounds.start, end: bounds.end, key: bounds.key, status, snapshot: clone(snapshot) || {}, openedAt: new Date(now).toISOString(), closedAt: null, evaluation: null };
 }

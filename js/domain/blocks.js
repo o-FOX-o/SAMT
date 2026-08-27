@@ -1,22 +1,35 @@
 import { ValidationError } from "../shared/errors.js";
 import { createId } from "../shared/ids.js";
-import { clone, requireName } from "../shared/validation.js";
+import { clone, requireName, isPlainObject } from "../shared/validation.js";
 
 export const BLOCK_TYPES = ["collection", "action_list", "routine", "workflow", "project", "cycle", "target"];
 export const DEFINITION_STATUSES = ["LIBRARY", "ACTIVE", "PAUSED", "ARCHIVED"];
 export const RUNTIME_STATUSES = ["NOT_STARTED", "AVAILABLE", "IN_PROGRESS", "READY_TO_FINISH", "COMPLETED", "PARTIAL", "MISSED", "EXPIRED", "OVERDUE", "SKIPPED", "PAUSED", "CANCELLED", "BLOCKED", "LOCKED", "NOT_APPLICABLE", "EXCUSED"];
 
+export function defaultBlockConfig(type) {
+  if (type === "collection") return { analysisMode: "inclusive" };
+  if (type === "action_list") return { occurrencePolicy: "expire" };
+  if (type === "routine") return { completionMode: "required_only", finishBehaviour: "auto" };
+  if (type === "workflow") return { finishBehaviour: "auto", progression: "ordered" };
+  if (type === "project") return { conditions: [{ type: "all_required" }], combination: "all", finishBehaviour: "ready" };
+  if (type === "cycle") return { generationMode: "simple_ordered", eligibility: "strict_order", missedItemPolicy: "keep_position", periodEnd: "never", positionPolicy: "continue" };
+  if (type === "target") return { mode: "accumulation", metric: "time", period: "day", periodStyle: "calendar", contributionScope: "direct" };
+  return {};
+}
+
 export function createBlock({ id = null, type, name, description = "", definitionStatus = "LIBRARY", relationships = [], config = {}, now = new Date() } = {}) {
   if (!BLOCK_TYPES.includes(type)) throw new ValidationError("Block type is invalid.");
   if (!DEFINITION_STATUSES.includes(definitionStatus)) throw new ValidationError("Block definition status is invalid.");
+  if (!Array.isArray(relationships)) throw new ValidationError("Block relationships must be an array.");
   const stamp = new Date(now).toISOString();
-  return { id: id || createId("block", now), type, name: requireName(name, "Block name"), description: String(description || ""), definitionStatus, relationships: clone(relationships) || [], config: clone(config) || {}, createdAt: stamp, updatedAt: stamp };
+  return { id: id || createId("block", now), type, name: requireName(name, "Block name"), description: String(description || ""), definitionStatus, relationships: clone(relationships) || [], config: { ...defaultBlockConfig(type), ...(clone(config) || {}) }, createdAt: stamp, updatedAt: stamp };
 }
 
 export function validateBlock(block) {
   if (!block?.id || !BLOCK_TYPES.includes(block.type) || !requireName(block.name, "Block name")) throw new ValidationError("Block is invalid.");
   if (!DEFINITION_STATUSES.includes(block.definitionStatus)) throw new ValidationError("Block definition status is invalid.");
   if (!Array.isArray(block.relationships)) throw new ValidationError("Block relationships must be an array.");
+  if (!isPlainObject(block.config || {})) throw new ValidationError("Block configuration must be an object.");
   return true;
 }
 
