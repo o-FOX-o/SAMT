@@ -1,0 +1,6 @@
+{
+  "name": "samt-engine-v3",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "node --test tests" }
+}

@@ -1035,6 +1035,10 @@ svg {
 
 <div id="life-command-v2"></div>
 
+<!-- Optional V3 engine bridge. The embedded V2 client remains the fallback if
+     modules are unavailable (for example when this file is opened directly). -->
+<script type="module" src="./js/main.js"></script>
+
 <script>
 (() => {
   "use strict";
