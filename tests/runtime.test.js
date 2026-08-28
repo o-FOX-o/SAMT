@@ -74,3 +74,27 @@ test("returning to a Workflow step reopens downstream steps without deleting his
   assert.equal(returned[2].reopenedFromState, "COMPLETED");
   assert.equal(steps[2].state, "COMPLETED");
 });
+
+test("only executable finite Blocks may create Runs", () => {
+  const clock = fakeClock(new Date("2026-01-01T10:00:00Z"));
+  const repository = memoryRepository(createEmptyState(clock.now()));
+  const engine = createEngine({ repository, clock });
+  const collection = engine.commands.createBlock({ id: "block_collection", type: "collection", name: "Library" });
+  const target = engine.commands.createBlock({ id: "block_target", type: "target", name: "Weekly Target" });
+  assert.throws(() => engine.commands.startRun({ blockId: collection.id }), /do not create Runs/);
+  assert.throws(() => engine.commands.startRun({ blockId: target.id }), /do not create Runs/);
+  assert.equal(repository.getState().runs.length, 0);
+});
+
+test("an Action Log cannot silently satisfy an Occurrence for another Action", () => {
+  const clock = fakeClock(new Date("2026-01-01T10:00:00Z"));
+  const repository = memoryRepository(createEmptyState(clock.now()));
+  const engine = createEngine({ repository, clock });
+  const first = engine.commands.createAction({ id: "action_first", name: "First" });
+  const second = engine.commands.createAction({ id: "action_second", name: "Second" });
+  const list = engine.commands.createBlock({ id: "block_list", type: "action_list", name: "List", definitionStatus: "ACTIVE" });
+  const relationship = engine.commands.addRelationship(list.id, { id: "relationship_first", kind: "action", refId: first.id });
+  const occurrence = engine.commands.createOccurrence({ id: "occurrence_first", relationshipId: relationship.id, deadline: "2026-01-02T00:00:00Z" });
+  assert.throws(() => engine.commands.logAction({ actionId: second.id, durationMinutes: 5, occurrenceId: occurrence.id, contextRefs: [{ occurrenceId: occurrence.id }] }), /different Action/);
+  assert.equal(repository.getState().actionLogs.length, 0);
+});

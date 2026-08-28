@@ -39,3 +39,6 @@ export function setDefinitionStatus(block, status, now = new Date()) {
 }
 
 export function isExecutableBlockType(type) { return ["action_list", "routine", "workflow", "project", "cycle"].includes(type); }
+
+// Collections organise and Targets evaluate; neither creates a finite Run.
+export function isRunCapableBlockType(type) { return ["routine", "workflow", "project", "cycle"].includes(type); }
