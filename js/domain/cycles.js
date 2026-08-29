@@ -219,6 +219,7 @@ export function createBigCycleRuntime({
     appearanceCoverage: [],
     completionCoverage: [],
     smallCycles: [],
+    resolutions: [],
     currentSmallCycleId: null,
     currentSlot: -1,
     relationshipSnapshot: relationships.filter((relationship) => relationship.active !== false).reduce((map, relationship) => {
@@ -270,12 +271,15 @@ export function recordCycleResolution({
     outcome,
     resolvedAt: stamp
   };
+  const generatedSmallCycles = (bigCycle.smallCycles || []).filter((item) => item?.slots || item?.sequence);
+  const legacyResolutions = (bigCycle.smallCycles || []).filter((item) => item?.outcome && !item?.slots && !item?.sequence);
   const updated = {
     ...bigCycle,
     appearanceCoverage,
     completionCoverage,
     fairness: clone(smallCycle?.fairness) || bigCycle.fairness,
-    smallCycles: [...(bigCycle.smallCycles || []), resolution],
+    smallCycles: generatedSmallCycles,
+    resolutions: [...(bigCycle.resolutions || legacyResolutions), resolution],
     currentSmallCycleId: smallCycle?.id || bigCycle.currentSmallCycleId || null,
     currentSlot: slot == null ? bigCycle.currentSlot ?? -1 : slot
   };
