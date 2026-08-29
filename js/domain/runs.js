@@ -2,8 +2,8 @@ import { createId } from "../shared/ids.js";
 import { clone } from "../shared/validation.js";
 import { ValidationError } from "../shared/errors.js";
 
-export const RUN_STATES = ["NOT_STARTED", "IN_PROGRESS", "READY_TO_FINISH", "PAUSED", "COMPLETED", "PARTIAL", "MISSED", "OVERDUE", "CANCELLED"];
-export const RUN_TERMINAL_STATES = ["COMPLETED", "PARTIAL", "MISSED", "CANCELLED"];
+export const RUN_STATES = ["NOT_STARTED", "IN_PROGRESS", "READY_TO_FINISH", "PAUSED", "COMPLETED", "PARTIAL", "MISSED", "OVERDUE", "EXPIRED", "CANCELLED"];
+export const RUN_TERMINAL_STATES = ["COMPLETED", "PARTIAL", "MISSED", "EXPIRED", "CANCELLED"];
 
 export function isRunTerminal(runOrStatus) {
   const status = typeof runOrStatus === "string" ? runOrStatus : runOrStatus?.status;
