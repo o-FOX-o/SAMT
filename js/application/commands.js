@@ -499,6 +499,19 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         return clone(state.runs[index]);
       });
     },
+    updateRoutineChild(runId, relationshipId, stateName, reason = null) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index, item: run } = requireStateItem(state.runs, runId, "Run");
+        const block = state.blocks.find((candidate) => candidate.id === run.blockId);
+        if (!block || block.type !== "routine") throw new ValidationError("Run is not a Routine Run.");
+        const next = updateRoutineChild({ run, relationshipId, state: stateName, reason, now: now() });
+        state.runs[index] = applyRunEvaluation(next, evaluateRun(next, block, false));
+        touch();
+        addHistory({ type: "routine", description: `Routine child ${stateName}`, objectType: "run", objectId: runId, metadata: { relationshipId, state: stateName, reason } });
+        return clone(state.runs[index]);
+      });
+    },
     updateWorkflowStep(runId, stepId, stateName, reason = null) {
       return repository.transaction(() => {
         const state = repository.getState();
