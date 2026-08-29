@@ -4,7 +4,12 @@ import { addCalendarDays, partsInTimeZone } from "../shared/dates.js";
 export function occurrenceIdentity({ relationshipId, scheduledAt, sequence = 0 } = {}) { return `${relationshipId}:${scheduledAt || "manual"}:${sequence}`; }
 
 export function isScheduleDue({ schedule = {}, at, timezone = "UTC" } = {}) {
-  const mode = schedule.mode || "manual"; if (mode === "always_available" || mode === "manual") return mode === "always_available";
+  const mode = schedule.mode || "manual";
+  const current = new Date(at);
+  if (!Number.isFinite(current.getTime())) return false;
+  if (schedule.activeFrom && current < new Date(schedule.activeFrom)) return false;
+  if (schedule.activeUntil && current > new Date(schedule.activeUntil)) return false;
+  if (mode === "always_available" || mode === "manual") return mode === "always_available";
   const date = localDate(at, timezone);
   if (mode === "once") {
     const raw = schedule.date || schedule.anchorAt;
