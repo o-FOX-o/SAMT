@@ -226,6 +226,17 @@ export function mountSamtApp(engine, documentRef = globalThis.document) {
     const target = event.target.closest?.("[data-action]"); if (!target) return; const action = target.dataset.action; const id = target.dataset.id;
     if (action === "open-log") return openLogModal(id, { occurrenceId: target.dataset.occurrenceId, blockId: target.dataset.blockId });
     if (action === "copy-backup") return copyBackup();
+    if (action === "remove-choice-option") { target.closest("[data-choice-row]")?.remove(); return; }
+    if (action === "add-choice-option") {
+      const container = target.closest("form")?.querySelector("[data-choice-options]");
+      if (!container) return;
+      const row = documentRef.createElement("div");
+      row.className = "samt-choice-option";
+      row.dataset.choiceRow = "true";
+      row.innerHTML = "<input type='hidden' name='choiceId' value=''><label>Option " + (container.children.length + 1) + "<input class='samt-input' name='choiceLabel' required></label><label>Analysis score<input class='samt-input' name='choiceScore' type='number' step='any'></label><button class='samt-button ghost small' type='button' data-action='remove-choice-option'>Remove</button>";
+      container.append(row);
+      return;
+    }
     if (action === "manager-select-all") { target.closest("form")?.querySelectorAll("input[name='managerSelected']")?.forEach((input) => { input.checked = true; }); return; }
     if (action === "manager-deselect-all") { target.closest("form")?.querySelectorAll("input[name='managerSelected']")?.forEach((input) => { input.checked = false; }); return; }
     if (["manager-archive", "manager-unarchive", "manager-bin", "manager-permanent"].includes(action)) { const selected = selectedRows(target.closest("form"), "managerSelected"); const invalid = selected.filter((item) => !["category", "tag", "unit", "action", "block"].includes(item.type)); if (invalid.length) return showFlash("Archive, Unarchive, Move to Bin and Permanent Delete apply only to definitions. Use the runtime deletion action for records.", "info"); if (action === "manager-unarchive") return runCommand(() => engine.commands.unarchiveDefinitions(selected), "Definitions unarchived."); return openDefinitionOperation(action === "manager-archive" ? "archive" : action === "manager-bin" ? "bin" : "permanent", selected); }
