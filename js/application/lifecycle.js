@@ -176,7 +176,7 @@ function applyEvaluatedRun(run, evaluated, now) {
   if (evaluated.results) next.runtime = { ...(next.runtime || {}), conditions: clone(evaluated.results) };
   if (evaluated.status && !["NOT_STARTED", "PAUSED"].includes(run.status)) {
     next.status = evaluated.status;
-    if (["COMPLETED", "PARTIAL", "MISSED", "CANCELLED"].includes(evaluated.status)) {
+    if (["COMPLETED", "PARTIAL", "MISSED", "EXPIRED", "CANCELLED"].includes(evaluated.status)) {
       next.finishedAt = next.finishedAt || stamp;
     }
   }
