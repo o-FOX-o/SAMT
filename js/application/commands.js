@@ -15,6 +15,7 @@ import { initializeRoutineRuntime, updateRoutineChild, evaluateRoutineRun } from
 import { initializeProjectRuntime, updateProjectChild, evaluateProjectRun, createMilestone, updateMilestone, applyProjectScopeChange as applyDomainProjectScopeChange } from "../domain/projects.js";
 import { evaluateWorkflowRun, initializeWorkflowRuntime } from "../domain/workflows.js";
 import { createActivation, pauseActivation as pauseDomainActivation, resumeActivation as resumeDomainActivation, recordActivationRun } from "../domain/activations.js";
+import { calculateTargetProgress } from "../domain/targets.js";
 import { advanceCyclePosition, createBigCycleRuntime, generateNextSmallCycle, currentGeneratedCycleSlot, advanceGeneratedCycleSlot, resolveCycleSlot as resolveDomainCycleSlot, recordCycleResolution } from "../domain/cycles.js";
 import { appendHistory } from "../domain/history.js";
 import { domainEvent, EVENT_TYPES } from "./events.js";
@@ -138,11 +139,26 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
     return startDomainRun(run, stamp);
   }
 
-  function evaluateRun(run, block, finished = false) {
+  function evaluateRun(run, block, finished = false, state = repository.getState()) {
     const source = run.snapshot?.block || block;
     if (block.type === "routine") return evaluateRoutineRun({ run, routine: source, now: now(), finished });
     if (block.type === "workflow") return evaluateWorkflowRun({ run, workflow: source, now: now(), finished });
-    if (block.type === "project") return evaluateProjectRun({ project: source, run, now: now(), finished });
+    if (block.type === "project") {
+      const resultFields = Object.fromEntries((state.actions || []).flatMap((action) => (action.resultFields || []).map((field) => [field.id, field])));
+      const results = {};
+      for (const log of (state.actionLogs || []).filter((candidate) => candidate.contextRefs?.some((reference) => reference.runId === run.id)).sort((a, b) => new Date(a.eventAt) - new Date(b.eventAt))) {
+        for (const entry of log.resultValues || []) results[entry.fieldId] = entry.value;
+      }
+      const targets = Object.fromEntries((state.blocks || []).filter((candidate) => candidate.type === "target").map((target) => {
+        try {
+          const progress = calculateTargetProgress({ target, logs: state.actionLogs || [], actions: state.actions || [], blocks: state.blocks || [], units: state.units || [], descendantBlockIds: target.config?.descendantBlockIds || [] });
+          return [target.id, { ...progress, reached: Boolean(progress.reached || progress.status === "reached" || progress.status === "REACHED") }];
+        } catch {
+          return [target.id, { reached: false }];
+        }
+      }));
+      return evaluateProjectRun({ project: source, run, now: now(), finished, results, resultFields, targets, units: state.units || [] });
+    }
     return { status: run.status, qualified: true, satisfied: true };
   }
 
