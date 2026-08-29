@@ -383,8 +383,12 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         const contextRefs = clone(input.contextRefs || []);
         if (run) {
           const context = { blockId: run.blockId, runId: run.id, relationshipId: input.relationshipId || null, occurrenceId: input.occurrenceId || null };
-          const key = `${context.blockId || ""}:${context.runId || ""}:${context.occurrenceId || ""}`;
-          if (!contextRefs.some((reference) => `${reference.blockId || ""}:${reference.runId || ""}:${reference.occurrenceId || ""}` === key)) contextRefs.push(context);
+          const existingRunReference = contextRefs.find((reference) => reference.runId === run.id && !reference.occurrenceId);
+          if (existingRunReference) {
+            Object.assign(existingRunReference, context);
+          } else {
+            contextRefs.push(context);
+          }
         }
         const log = createActionLog({ ...input, contextRefs, action, finalizing: Boolean(input.finalizing), now: now(), units: state.units });
         if (state.actionLogs.some((candidate) => candidate.id === log.id)) throw new ConflictError(`Action Log ID already exists: ${log.id}`);
