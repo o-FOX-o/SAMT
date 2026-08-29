@@ -6,6 +6,15 @@ import { convertValue, isCompatible, unitMap } from "./units.js";
 
 export const RESULT_TYPES = ["percentage", "score", "measurement", "text", "choice"];
 
+function stableOptionId(fieldId, label) {
+  let hash = 2166136261;
+  for (const character of String(fieldId || "") + ":" + String(label || "")) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return "option_" + (hash >>> 0).toString(36);
+}
+
 export function createResultField({ id = null, definitionVersion = 1, type, label, helpText = "", required = false, position = 0, resultTagId = null, showInSummary = true, includeInAnalysis = true, config = {}, now = new Date() } = {}) {
   if (!RESULT_TYPES.includes(type)) throw new ValidationError("Result type is invalid.");
   const stamp = new Date(now).toISOString();
@@ -14,13 +23,13 @@ export function createResultField({ id = null, definitionVersion = 1, type, labe
   return field;
 }
 
-export function normalizeResultConfig(field) {
+export function normalizeResultConfig(field, now = new Date()) {
   const config = clone(field.config) || {};
   if (field.type === "percentage") return { decimal: Boolean(config.decimal) };
   if (field.type === "score") return { maximum: Math.max(0, finiteNumber(config.maximum, 100)), decimal: Boolean(config.decimal) };
   if (field.type === "measurement") return { defaultUnitId: config.defaultUnitId || null, allowedUnitIds: Array.isArray(config.allowedUnitIds) ? [...new Set(config.allowedUnitIds)] : [], min: config.min == null ? null : finiteNumber(config.min), max: config.max == null ? null : finiteNumber(config.max), decimal: config.decimal !== false };
   if (field.type === "text") return { multiline: Boolean(config.multiline), displaySize: ["small", "medium", "large"].includes(config.displaySize) ? config.displaySize : "medium", placeholder: String(config.placeholder || ""), minChars: Math.max(0, Number.isFinite(Number(config.minChars)) ? Number(config.minChars) : 0), maxChars: Math.max(0, Number.isFinite(Number(config.maxChars)) ? Number(config.maxChars) : 2000) };
-  const options = Array.isArray(config.options) ? config.options.map((option, index) => ({ id: option.id || `option_${index + 1}`, label: requireName(option.label, "Choice option"), position: Number.isFinite(Number(option.position)) ? Number(option.position) : index, analysisScore: option.analysisScore == null ? null : finiteNumber(option.analysisScore) })) : [];
+  const options = Array.isArray(config.options) ? config.options.map((option, index) => ({ id: option.id || stableOptionId(field.id, option.label, now), label: requireName(option.label, "Choice option"), position: Number.isFinite(Number(option.position)) ? Number(option.position) : index, analysisScore: option.analysisScore == null ? null : finiteNumber(option.analysisScore) })) : [];
   return { mode: config.mode === "multiple" ? "multiple" : "single", options, minSelections: Math.max(0, Number.isFinite(Number(config.minSelections)) ? Number(config.minSelections) : 0), maxSelections: config.maxSelections == null ? null : Math.max(0, Number(config.maxSelections)), orderMatters: Boolean(config.orderMatters), betterDirection: ["higher", "lower", "none"].includes(config.betterDirection) ? config.betterDirection : "none" };
 }
 
@@ -64,13 +73,13 @@ export function validateResultValues({ fields = [], resultValues = [], units = [
 
 function validateSingleValue(field, value, units) {
   const config = normalizeResultConfig(field);
-  if (field.type === "percentage") { if (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100) throw new ValidationError(`${field.label} must be between 0 and 100.`); return; }
-  if (field.type === "score") { if (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > config.maximum) throw new ValidationError(`${field.label} must be between 0 and ${config.maximum}.`); return; }
-  if (field.type === "measurement") { const numeric = finiteNumber(value?.value, NaN); if (!Number.isFinite(numeric)) throw new ValidationError(`${field.label} requires a numeric value.`); const map = unitMap(units); const unit = map.get(value?.unitId || config.defaultUnitId); if (!unit) throw new ValidationError(`${field.label} requires a valid Unit.`); if (config.allowedUnitIds.length && !config.allowedUnitIds.includes(unit.id)) throw new ValidationError(`${field.label} Unit is not allowed.`); const comparable = config.defaultUnitId && unit.id !== config.defaultUnitId ? convertValue(numeric, unit.id, config.defaultUnitId, units) : numeric; if (config.min != null && comparable < config.min || config.max != null && comparable > config.max) throw new ValidationError(`${field.label} is outside its allowed range.`); return; }
+  if (field.type === "percentage") { if (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > 100) throw new ValidationError(`${field.label} must be between 0 and 100.`); if (!config.decimal && !Number.isInteger(Number(value))) throw new ValidationError(`${field.label} accepts whole numbers only.`); return; }
+  if (field.type === "score") { if (!Number.isFinite(Number(value)) || Number(value) < 0 || Number(value) > config.maximum) throw new ValidationError(`${field.label} must be between 0 and ${config.maximum}.`); if (!config.decimal && !Number.isInteger(Number(value))) throw new ValidationError(`${field.label} accepts whole numbers only.`); return; }
+  if (field.type === "measurement") { const numeric = finiteNumber(value?.value, NaN); if (!Number.isFinite(numeric)) throw new ValidationError(`${field.label} requires a numeric value.`); if (!config.decimal && !Number.isInteger(numeric)) throw new ValidationError(`${field.label} accepts whole numbers only.`); const map = unitMap(units); const unit = map.get(value?.unitId || config.defaultUnitId); if (!unit) throw new ValidationError(`${field.label} requires a valid Unit.`); if (config.allowedUnitIds.length && !config.allowedUnitIds.includes(unit.id)) throw new ValidationError(`${field.label} Unit is not allowed.`); const comparable = config.defaultUnitId && unit.id !== config.defaultUnitId ? convertValue(numeric, unit.id, config.defaultUnitId, units) : numeric; if (config.min != null && comparable < config.min || config.max != null && comparable > config.max) throw new ValidationError(`${field.label} is outside its allowed range.`); return; }
   if (field.type === "text") { if (typeof value !== "string") throw new ValidationError(`${field.label} must be text.`); if (value.length < config.minChars || value.length > config.maxChars) throw new ValidationError(`${field.label} has an invalid length.`); return; }
   const selected = config.mode === "multiple" ? (Array.isArray(value) ? value : []) : [value];
   if (config.mode === "multiple" && !Array.isArray(value)) throw new ValidationError(`${field.label} requires multiple selections.`);
-  if ((!selected.length || selected.every((entry) => entry == null || entry === "")) && config.minSelections > 0) throw new ValidationError(`${field.label} requires a selection.`);
+  if (selected.length < config.minSelections || (!selected.length || selected.every((entry) => entry == null || entry === "")) && config.minSelections > 0) throw new ValidationError(`${field.label} requires at least ${config.minSelections} selection(s).`);
   if (config.maxSelections != null && selected.length > config.maxSelections) throw new ValidationError(`${field.label} has too many selections.`);
   if (new Set(selected).size !== selected.length) throw new ValidationError(`${field.label} contains a duplicate choice.`);
   const ids = new Set(config.options.map((option) => option.id)); if (selected.some((id) => !ids.has(id))) throw new ValidationError(`${field.label} contains an invalid choice.`);
@@ -99,13 +108,33 @@ export function analyzeResultValues({ field, values = [], units = [], operation 
     const latest = rows.at(-1); const canRank = config.orderMatters && config.betterDirection !== "none"; const selected = operation === "latest" || !operation ? latest : operation === "highest" ? (canRank ? rows.slice().sort((a, b) => choiceAnalyticalValue(field, b) - choiceAnalyticalValue(field, a))[0] : latest) : operation === "lowest" ? (canRank ? rows.slice().sort((a, b) => choiceAnalyticalValue(field, a) - choiceAnalyticalValue(field, b))[0] : latest) : latest;
     return { count: rows.length, value: selected, frequencies, percentage: all.length ? Object.fromEntries(Object.entries(frequencies).map(([key, count]) => [key, count / all.length * 100])) : {}, ordinalAverage, medianRank, numericAverage: scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : null };
   }
-  const numeric = field.type === "measurement" ? rows.map((entry) => {
-    const unitId = entry?.unitId || config.defaultUnitId; return targetUnitId && unitId ? convertValue(entry.value, unitId, targetUnitId, units) : Number(entry.value);
-  }) : rows.map(Number);
-  if (field.type === "measurement" && operation === "total") return { count: rows.length, value: numeric.reduce((sum, value) => sum + value, 0) };
+  let analysisUnitId = null;
+  let analysisUnitSymbol = null;
+  let numeric;
+  if (field.type === "measurement") {
+    const entries = rows.map((entry) => typeof entry === "object" ? entry : { value: entry, unitId: config.defaultUnitId });
+    analysisUnitId = targetUnitId || config.defaultUnitId || entries.find((entry) => entry?.unitId)?.unitId || null;
+    const map = unitMap(units);
+    if (analysisUnitId && !map.has(analysisUnitId)) throw new ValidationError(`Unknown analysis Unit: ${analysisUnitId}`);
+    numeric = entries.map((entry) => {
+      const unitId = entry?.unitId || config.defaultUnitId || analysisUnitId;
+      const raw = finiteNumber(entry?.value, NaN);
+      if (!Number.isFinite(raw)) throw new ValidationError(`${field.label} contains a non-numeric measurement.`);
+      if (analysisUnitId && unitId) {
+        if (!map.has(unitId) || !isCompatible(unitId, analysisUnitId, units)) throw new ValidationError(`${field.label} contains incompatible Measurement Units.`);
+        return convertValue(raw, unitId, analysisUnitId, units);
+      }
+      return raw;
+    });
+    analysisUnitSymbol = analysisUnitId ? map.get(analysisUnitId)?.symbol || null : null;
+  } else {
+    numeric = rows.map(Number);
+  }
+  const unitInfo = field.type === "measurement" ? { unitId: analysisUnitId, unitSymbol: analysisUnitSymbol } : {};
+  if (field.type === "measurement" && operation === "total") return { count: rows.length, value: numeric.reduce((sum, value) => sum + value, 0), ...unitInfo };
   const valuesSorted = [...numeric].sort((a, b) => a - b); const latest = numeric.at(-1); const average = numeric.reduce((sum, value) => sum + value, 0) / numeric.length;
   const value = operation === "latest" ? latest : ["min", "lowest"].includes(operation) ? valuesSorted[0] : ["max", "highest"].includes(operation) ? valuesSorted.at(-1) : operation === "total" ? numeric.reduce((sum, entry) => sum + entry, 0) : average;
-  return { count: numeric.length, value, latest, min: valuesSorted[0], max: valuesSorted.at(-1), average, total: numeric.reduce((sum, entry) => sum + entry, 0), change: latest - numeric[0] };
+  return { count: numeric.length, value, latest, min: valuesSorted[0], max: valuesSorted.at(-1), average, total: numeric.reduce((sum, entry) => sum + entry, 0), change: latest - numeric[0], ...unitInfo };
 }
 
 export function normalizeForTextAnalysis(value) { return String(value ?? "").trim().toLocaleLowerCase(); }
