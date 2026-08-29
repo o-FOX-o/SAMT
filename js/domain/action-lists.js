@@ -7,6 +7,10 @@ const TERMINAL_OCCURRENCE_STATES = ["completed", "skipped", "missed", "expired",
 
 export function validateActionListSchedule(schedule = {}) {
   if (!SCHEDULE_MODES.includes(schedule.mode || "manual")) throw new InvalidScheduleError("Action List schedule mode is invalid.");
+  for (const key of ["activeFrom", "activeUntil", "anchorAt"]) {
+    if (schedule[key] != null && !Number.isFinite(new Date(schedule[key]).getTime())) throw new InvalidScheduleError(`Schedule ${key} is invalid.`);
+  }
+  if (schedule.activeFrom && schedule.activeUntil && new Date(schedule.activeFrom) > new Date(schedule.activeUntil)) throw new InvalidScheduleError("Schedule active window is invalid.");
   if (schedule.mode === "interval") {
     if (!Number.isInteger(Number(schedule.every)) || Number(schedule.every) < 1) throw new InvalidScheduleError("Interval schedules require a positive interval.");
     if (!["hours", "days", "weeks", "months"].includes(schedule.unit || "days")) throw new InvalidScheduleError("Interval unit is invalid.");
