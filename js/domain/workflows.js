@@ -12,7 +12,7 @@ export function initializeWorkflowRuntime({ workflow = {}, now = new Date() } = 
   const stamp = new Date(now).toISOString(); const relationships = workflowRelationships(workflow);
   const steps = relationships.map((relationship, position) => {
     const config = relationship.config || {};
-    return createWorkflowStep({ id: relationship.id, relationshipId: relationship.id, name: relationship.label || relationship.name || ("Step " + (position + 1)), required: config.required !== false, state: position === 0 ? "AVAILABLE" : "LOCKED", position, predecessorId: position ? relationships[position - 1].id : null, timing: config.timing || null, availableFrom: config.availableFrom || config.timing?.availableFrom || null, deadline: config.deadline || config.timing?.deadline || null, allowSkip: config.allowSkip === true, requireSkipReason: config.requireSkipReason === true, allowExcuse: config.allowExcuse === true || config.excuseAllowed === true, allowNotApplicable: config.allowNotApplicable === true || config.allowNA === true, createdAt: stamp });
+    return createWorkflowStep({ id: relationship.id, relationshipId: relationship.id, name: relationship.label || relationship.name || ("Step " + (position + 1)), required: config.required !== false, state: (config.predecessorId || config.dependsOnRelationshipId || position) ? "LOCKED" : "AVAILABLE", position, predecessorId: config.predecessorId || config.dependsOnRelationshipId || (position ? relationships[position - 1].id : null), timing: config.timing || null, availableFrom: config.availableFrom || config.timing?.availableFrom || null, deadline: config.deadline || config.timing?.deadline || null, allowSkip: config.allowSkip === true, requireSkipReason: config.requireSkipReason === true, allowExcuse: config.allowExcuse === true || config.excuseAllowed === true, allowNotApplicable: config.allowNotApplicable === true || config.allowNA === true, createdAt: stamp });
   });
   return { type: "workflow", steps, currentStepId: steps[0]?.id || null, transitions: [], startedAt: stamp, updatedAt: stamp };
 }
@@ -30,8 +30,20 @@ export function resolveWorkflowCompletion({ steps = [] } = {}) {
 
 export function returnToWorkflowStep({ steps = [], stepId, now = new Date() } = {}) {
   const index = steps.findIndex((step) => step.id === stepId); if (index < 0) throw new ValidationError("Workflow step does not exist.");
+  const descendants = new Set();
+  const visit = (id) => {
+    for (const step of steps) if (step.predecessorId === id && !descendants.has(step.id)) { descendants.add(step.id); visit(step.id); }
+  };
+  visit(stepId);
   const reopenedAt = new Date(now).toISOString();
-  return steps.map((step, current) => current < index ? step : { ...step, state: current === index ? "AVAILABLE" : "LOCKED", reopenedAt, reopenedFromState: step.state });
+  return steps.map((step, current) => {
+    const downstream = descendants.size ? descendants.has(step.id) : current > index;
+    return current === index
+      ? { ...step, state: "AVAILABLE", reopenedAt, reopenedFromState: step.state }
+      : downstream
+        ? { ...step, state: "LOCKED", reopenedAt, reopenedFromState: step.state }
+        : step;
+  });
 }
 
 export function createWorkflowStep({ id, relationshipId = null, name = "", required = true, state = "LOCKED", position = 0, timing = null, predecessorId = null, availableFrom = null, deadline = null, allowSkip = false, requireSkipReason = false, allowExcuse = false, allowNotApplicable = false, createdAt = null } = {}) {
@@ -62,8 +74,11 @@ export function transitionWorkflowStep({ run, stepId, state, reason = null, now 
   const index = run.steps.findIndex((step) => step.id === stepId); if (index < 0) throw new ValidationError("Workflow step does not exist.");
   const before = run.steps[index]; const nextStep = resolveWorkflowStep({ step: before, state, reason, now }); const steps = run.steps.map((step, current) => current === index ? nextStep : step);
   if (["COMPLETED", "EXCUSED", "NOT_APPLICABLE"].includes(state)) {
-    const next = steps.slice(index + 1).find((step) => step.state === "LOCKED");
-    if (next) steps[steps.findIndex((step) => step.id === next.id)] = { ...next, state: "AVAILABLE" };
+    const unlockable = steps.filter((step) => step.state === "LOCKED" && (step.predecessorId === before.id || (step.predecessorId == null && step.position === before.position + 1)));
+    for (const next of unlockable) {
+      const nextIndex = steps.findIndex((step) => step.id === next.id);
+      steps[nextIndex] = { ...next, state: "AVAILABLE" };
+    }
   }
   const stamp = new Date(now).toISOString(); const transitions = [...(run.transitions || []), { type: "STEP_STATE", stepId, from: before.state, to: state, reason: reason || null, at: stamp }];
   const currentStepId = steps.find((step) => ["AVAILABLE", "IN_PROGRESS", "BLOCKED", "OVERDUE"].includes(step.state))?.id || null;
