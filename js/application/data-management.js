@@ -301,14 +301,131 @@ function filteredIds(state, type, options) {
   return index.records.filter((record) => record.type === type).map((record) => record.id);
 }
 
-function removeLogs(state, ids) {
-  const removed = new Set(ids); state.actionLogs = (state.actionLogs || []).filter((log) => !removed.has(log.id));
+function removeLogs(state, ids, now = new Date()) {
+  const removed = new Set(ids);
+  state.actionLogs = (state.actionLogs || []).filter((log) => !removed.has(log.id));
   for (const occurrence of state.occurrences || []) occurrence.logIds = (occurrence.logIds || []).filter((id) => !removed.has(id));
   for (const occurrence of state.occurrences || []) {
     const relationship = (state.blocks || []).flatMap((block) => block.relationships || []).find((item) => item.id === occurrence.relationshipId);
     const action = relationship?.kind === "action" ? state.actions.find((item) => item.id === relationship.refId) : null;
-    if (!["completed", "skipped", "excused", "not_applicable"].includes(occurrence.status)) occurrence.status = resolveOccurrenceStatus({ occurrence, logs: state.actionLogs, action, now: new Date(), unfinishedPolicy: occurrence.snapshot?.unfinishedPolicy || relationship?.config?.unfinishedPolicy || "expire" });
+    if (!["completed", "skipped", "excused", "not_applicable"].includes(occurrence.status)) {
+      occurrence.status = resolveOccurrenceStatus({
+        occurrence,
+        logs: state.actionLogs,
+        action,
+        now,
+        unfinishedPolicy: occurrence.snapshot?.unfinishedPolicy || relationship?.config?.unfinishedPolicy || "expire"
+      });
+    }
   }
+}
+
+const RUNTIME_TYPES = ["activation", "run", "occurrence", "period", "targetEvaluation", "cycleSmallCycle", "cycleBigCycle", "actionLog", "review", "task", "quickTask", "history", "importHistory"];
+
+function ensureRuntimeSelection(selections = []) {
+  const result = [];
+  const seen = new Set();
+  for (const selection of selections || []) {
+    if (!RUNTIME_TYPES.includes(selection?.type) || !selection?.id) throw new ValidationError("Only existing runtime/data records can be selected for exact deletion.");
+    const key = `${selection.type}:${selection.id}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push({ type: selection.type, id: selection.id });
+  }
+  if (!result.length) throw new ValidationError("Select at least one runtime/data record.");
+  return result;
+}
+
+function runtimeRecord(state, type, id) {
+  const collection = {
+    activation: "activations", run: "runs", occurrence: "occurrences", period: "periods",
+    targetEvaluation: "targetEvaluations", cycleSmallCycle: "cycleSmallCycles", cycleBigCycle: "cycleBigCycles",
+    actionLog: "actionLogs", review: "reviews", task: "tasks", quickTask: "quickTasks",
+    history: "history", importHistory: "importHistory"
+  }[type];
+  return collection ? (state[collection] || []).find((item) => item.id === id) || null : null;
+}
+
+export function getRuntimeDeletionImpact(state = {}, selections = []) {
+  const selected = ensureRuntimeSelection(selections);
+  const missing = selected.filter((selection) => !runtimeRecord(state, selection.type, selection.id));
+  if (missing.length) throw new NotFoundError(`Runtime record not found: ${missing.map((item) => `${item.type}:${item.id}`).join(", ")}`);
+  const ids = (type) => new Set(selected.filter((selection) => selection.type === type).map((selection) => selection.id));
+  const logIds = ids("actionLog");
+  const occurrenceIds = ids("occurrence");
+  const runIds = ids("run");
+  const periodIds = ids("period");
+  const actionLogs = (state.actionLogs || []).filter((log) => logIds.has(log.id));
+  const referencedByLogs = {
+    occurrences: (state.occurrences || []).filter((occurrence) => occurrenceIds.has(occurrence.id) && (occurrence.logIds || []).length).length,
+    runs: actionLogs.filter((log) => (log.contextRefs || []).some((reference) => runIds.has(reference.runId))).length,
+    occurrencesFromLogs: actionLogs.filter((log) => (log.contextRefs || []).some((reference) => occurrenceIds.has(reference.occurrenceId))).length,
+    targetPeriods: periodIds.size ? (state.targetEvaluations || []).filter((evaluation) => periodIds.has(evaluation.periodId)).length : 0
+  };
+  return {
+    selections: selected,
+    counts: Object.fromEntries(RUNTIME_TYPES.map((type) => [type, selected.filter((item) => item.type === type).length])),
+    factualActionLogsDeleted: logIds.size,
+    occurrenceReferencesRemoved: referencedByLogs.occurrences + referencedByLogs.occurrencesFromLogs,
+    runReferencesRemoved: referencedByLogs.runs,
+    targetEvaluationsDeleted: referencedByLogs.targetPeriods,
+    historyRecordsDeleted: ids("history").size,
+    warnings: [
+      logIds.size ? "Selected Action Logs are factual records; dependent occurrence progress will be recalculated." : null,
+      runIds.size ? "Run context will be detached from retained Action Logs." : null,
+      occurrenceIds.size ? "Selected Occurrences will be removed without deleting their Action Logs." : null,
+      periodIds.size ? "Selected Target Period history and its evaluations will be removed." : null
+    ].filter(Boolean)
+  };
+}
+
+export function permanentlyDeleteRuntimeRecordsInState(state, selections, { now = new Date() } = {}) {
+  const selected = ensureRuntimeSelection(selections);
+  const impact = getRuntimeDeletionImpact(state, selected);
+  const byType = (type) => new Set(selected.filter((item) => item.type === type).map((item) => item.id));
+  const activationIds = byType("activation");
+  const runIds = byType("run");
+  const occurrenceIds = byType("occurrence");
+  const periodIds = byType("period");
+  const evaluationIds = byType("targetEvaluation");
+  const smallIds = byType("cycleSmallCycle");
+  const bigIds = byType("cycleBigCycle");
+  const logIds = byType("actionLog");
+  const reviewIds = byType("review");
+  const taskIds = byType("task");
+  const quickTaskIds = byType("quickTask");
+  const historyIds = byType("history");
+  const importIds = byType("importHistory");
+
+  state.activations = (state.activations || []).filter((item) => !activationIds.has(item.id));
+  for (const run of state.runs || []) if (activationIds.has(run.activationId)) {
+    run.activationSnapshot = run.activationSnapshot || { id: run.activationId, label: run.label || run.id };
+    run.activationId = null;
+  }
+  state.runs = (state.runs || []).filter((item) => !runIds.has(item.id));
+  for (const log of state.actionLogs || []) log.contextRefs = (log.contextRefs || []).filter((reference) => !runIds.has(reference.runId));
+  state.occurrences = (state.occurrences || []).filter((item) => !occurrenceIds.has(item.id));
+  for (const log of state.actionLogs || []) log.contextRefs = (log.contextRefs || []).filter((reference) => !occurrenceIds.has(reference.occurrenceId));
+  removeLogs(state, [...logIds], now);
+  state.periods = (state.periods || []).filter((item) => !periodIds.has(item.id));
+  state.targetEvaluations = (state.targetEvaluations || []).filter((item) => !evaluationIds.has(item.id) && !periodIds.has(item.periodId));
+  state.cycleSmallCycles = (state.cycleSmallCycles || []).filter((item) => !smallIds.has(item.id));
+  state.cycleBigCycles = (state.cycleBigCycles || []).filter((item) => !bigIds.has(item.id)).map((item) => ({
+    ...item,
+    smallCycles: (item.smallCycles || []).filter((small) => !smallIds.has(small.id)),
+    resolutions: (item.resolutions || []).filter((resolution) => !smallIds.has(resolution.smallCycleId))
+  }));
+  for (const block of state.blocks || []) if (block.type === "cycle") {
+    if (smallIds.has(block.config?.currentSmallCycleId)) block.config = { ...(block.config || {}), currentSmallCycleId: null, currentSlot: -1 };
+    if (bigIds.has(block.config?.currentBigCycleId)) block.config = { ...(block.config || {}), currentBigCycleId: null };
+  }
+  state.reviews = (state.reviews || []).filter((item) => !reviewIds.has(item.id));
+  state.tasks = (state.tasks || []).filter((item) => !taskIds.has(item.id));
+  state.quickTasks = (state.quickTasks || []).filter((item) => !quickTaskIds.has(item.id));
+  state.history = (state.history || []).filter((item) => !historyIds.has(item.id));
+  state.importHistory = (state.importHistory || []).filter((item) => !importIds.has(item.id));
+  validateManagedState(state);
+  return { ...impact, deleted: selected };
 }
 
 export function clearDataInState(state, options = {}) {
@@ -324,7 +441,7 @@ export function clearDataInState(state, options = {}) {
     }
     result.activations = ids.size;
   }
-  if (categories.has("actionLogs")) { const ids = filteredIds(state, "actionLog", filter); removeLogs(state, ids); result.actionLogs = ids.length; }
+  if (categories.has("actionLogs")) { const ids = filteredIds(state, "actionLog", filter); removeLogs(state, ids, options.now || new Date()); result.actionLogs = ids.length; }
   if (categories.has("runs")) { const ids = new Set(filteredIds(state, "run", filter)); state.runs = (state.runs || []).filter((run) => !ids.has(run.id)); for (const log of state.actionLogs || []) log.contextRefs = (log.contextRefs || []).filter((reference) => !ids.has(reference.runId)); result.runs = ids.size; }
   if (categories.has("occurrences")) { const ids = new Set(filteredIds(state, "occurrence", filter)); state.occurrences = (state.occurrences || []).filter((occurrence) => !ids.has(occurrence.id)); for (const log of state.actionLogs || []) log.contextRefs = (log.contextRefs || []).filter((reference) => !ids.has(reference.occurrenceId)); result.occurrences = ids.size; }
   if (categories.has("targetPeriodHistory")) { const ids = new Set((state.periods || []).filter((period) => period.status === "closed" && filteredIds(state, "period", filter).includes(period.id)).map((period) => period.id)); state.periods = (state.periods || []).filter((period) => !ids.has(period.id)); state.targetEvaluations = (state.targetEvaluations || []).filter((evaluation) => !ids.has(evaluation.periodId)); result.periods = ids.size; }
