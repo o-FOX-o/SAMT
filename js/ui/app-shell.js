@@ -29,18 +29,23 @@ function capacityView(state) {
 
 function resultInputs(action, units = []) {
   return (action?.resultFields || []).map((field) => {
-    const config = field.config || {}; const required = field.required ? "required" : ""; let input = "";
-    if (field.type === "percentage") input = `<input class="samt-input" name="result_${esc(field.id)}" type="number" min="0" max="100" step="any" ${required}>`;
-    else if (field.type === "score") input = `<input class="samt-input" name="result_${esc(field.id)}" type="number" min="0" max="${esc(String(config.maximum ?? 100))}" step="any" ${required}>`;
+    const config = field.config || {};
+    const required = field.required ? "required" : "";
+    const step = config.decimal === false ? "1" : "any";
+    let input = "";
+    if (field.type === "percentage") input = "<input class='samt-input' name='result_" + esc(field.id) + "' type='number' min='0' max='100' step='" + step + "' " + required + ">";
+    else if (field.type === "score") input = "<input class='samt-input' name='result_" + esc(field.id) + "' type='number' min='0' max='" + esc(String(config.maximum ?? 100)) + "' step='" + step + "' " + required + ">";
     else if (field.type === "measurement") {
       const unitIds = (config.allowedUnitIds?.length ? config.allowedUnitIds : [config.defaultUnitId]).filter(Boolean);
-      input = `<div class="samt-input-group"><input class="samt-input" name="result_${esc(field.id)}" type="number" step="any" ${required}><select class="samt-input" name="unit_${esc(field.id)}" ${unitIds.length ? "" : "disabled"}>${unitIds.map((id) => { const unit = units.find((candidate) => candidate.id === id); return `<option value="${esc(id)}">${esc(unit?.symbol || id)}</option>`; }).join("")}</select></div>`;
-    } else if (field.type === "text") input = config.multiline ? `<textarea class="samt-input" name="result_${esc(field.id)}" rows="${config.displaySize === "large" ? 5 : config.displaySize === "small" ? 2 : 3}" minlength="${Number(config.minChars || 0)}" maxlength="${Number(config.maxChars || 2000)}" placeholder="${esc(config.placeholder || "")}" ${required}></textarea>` : `<input class="samt-input" name="result_${esc(field.id)}" minlength="${Number(config.minChars || 0)}" maxlength="${Number(config.maxChars || 2000)}" placeholder="${esc(config.placeholder || "")}" ${required}>`;
+      input = "<div class='samt-input-group'><input class='samt-input' name='result_" + esc(field.id) + "' type='number' step='" + step + "' " + required + "><select class='samt-input' name='unit_" + esc(field.id) + "' " + (unitIds.length ? "" : "disabled") + ">" + unitIds.map((id) => { const unit = units.find((candidate) => candidate.id === id); return "<option value='" + esc(id) + "'>" + esc(unit?.symbol || id) + "</option>"; }).join("") + "</select></div>";
+    } else if (field.type === "text") input = config.multiline ? "<textarea class='samt-input' name='result_" + esc(field.id) + "' rows='" + (config.displaySize === "large" ? 5 : config.displaySize === "small" ? 2 : 3) + "' minlength='" + Number(config.minChars || 0) + "' maxlength='" + Number(config.maxChars || 2000) + "' placeholder='" + esc(config.placeholder || "") + "' " + required + "></textarea>" : "<input class='samt-input' name='result_" + esc(field.id) + "' minlength='" + Number(config.minChars || 0) + "' maxlength='" + Number(config.maxChars || 2000) + "' placeholder='" + esc(config.placeholder || "") + "' " + required + ">";
     else {
-      const multiple = config.mode === "multiple"; const selectionLimits = multiple ? ` ${config.maxSelections != null ? `size="${Math.max(2, Number(config.maxSelections))}"` : `size="4"`}` : "";
-      input = `<select class="samt-input" name="result_${esc(field.id)}" ${multiple ? "multiple" : ""}${selectionLimits} ${required && !multiple ? required : ""}>${multiple ? "" : "<option value=\"\">Choose…</option>"}${(config.options || []).slice().sort((a, b) => a.position - b.position).map((option) => `<option value="${esc(option.id)}">${esc(option.label)}</option>`).join("")}</select>`;
+      const multiple = config.mode === "multiple";
+      const selectionLimits = multiple ? (config.maxSelections != null ? " size='" + Math.max(2, Number(config.maxSelections)) + "'" : " size='4'") : "";
+      input = "<select class='samt-input' name='result_" + esc(field.id) + "' " + (multiple ? "multiple" : "") + selectionLimits + " " + (required && !multiple ? required : "") + ">" + (multiple ? "" : "<option value=''>Choose…</option>") + (config.options || []).slice().sort((a, b) => a.position - b.position).map((option) => "<option value='" + esc(option.id) + "'>" + esc(option.label) + "</option>").join("") + "</select>";
     }
-    return `<label class="samt-result-input"><span>${esc(field.label)}${field.required ? " *" : ""}</span>${input}</label>`;
+    const help = field.helpText ? "<small class='samt-muted'>" + esc(field.helpText) + "</small>" : "";
+    return "<label class='samt-result-input'><span>" + esc(field.label) + (field.required ? " *" : "") + "</span>" + help + input + "</label>";
   }).join("");
 }
 
