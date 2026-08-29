@@ -62,7 +62,7 @@ export function startOfLocalMonth(value, timezone = "UTC") {
 }
 
 export function calculatePeriodBounds({ period = "day", at, timezone = "UTC", weekStartsOn = 1,
-  style = "calendar", customStart = null, customEnd = null } = {}) {
+  style = "calendar", rollingWindowDays = null, customStart = null, customEnd = null } = {}) {
   const current = asDate(at);
   const rollingMatch = String(period).match(/^rolling[_-]?(\d+)[_-]?days?$/i);
   if (rollingMatch) {
@@ -70,7 +70,9 @@ export function calculatePeriodBounds({ period = "day", at, timezone = "UTC", we
     return { start: start.toISOString(), end: end.toISOString(), key: `rolling-${days}:${end.toISOString()}` };
   }
   if (style === "rolling" && ["day", "week", "month"].includes(period)) {
-    const days = period === "day" ? 1 : period === "week" ? 7 : 30; const end = current; const start = new Date(end.getTime() - days * DAY_MS);
+    const fallbackDays = period === "day" ? 1 : period === "week" ? 7 : 30;
+    const days = Number.isInteger(Number(rollingWindowDays)) && Number(rollingWindowDays) > 0 ? Number(rollingWindowDays) : fallbackDays;
+    const end = current; const start = new Date(end.getTime() - days * DAY_MS);
     return { start: start.toISOString(), end: end.toISOString(), key: `rolling-${days}:${end.toISOString()}` };
   }
   if (period === "session" || period === "all_time") return { start: null, end: null, key: period };
