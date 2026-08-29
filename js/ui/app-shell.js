@@ -12,7 +12,7 @@ import { renderAnalysisView } from "./analysis-view.js";
 import { renderHistoryView } from "./history-view.js";
 import { renderSettingsView } from "./settings-view.js";
 import { serializePackage } from "../import-export/exporter.js";
-import { BUILTIN_UNITS } from "../domain/units.js";
+import { BUILTIN_UNITS, isCompatible } from "../domain/units.js";
 
 const APP_NAME = "SAMT";
 
