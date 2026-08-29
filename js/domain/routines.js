@@ -72,6 +72,7 @@ export function updateRoutineChild({ run, relationshipId, state, logId = null, r
   if (!run || !relationshipId || !ROUTINE_CHILD_STATES.includes(state)) throw new ValidationError("Routine child update is invalid.");
   const stamp = new Date(now).toISOString(); const source = run.children || run.runtime?.children || []; const child = source.find((candidate) => (candidate.relationshipId || candidate.id) === relationshipId);
   if (!child) throw new ValidationError("Routine child does not exist.");
+  if (["COMPLETED", "SKIPPED", "EXCUSED", "NOT_APPLICABLE"].includes(state) && child.state === "LOCKED") throw new ValidationError("This Routine child is not available yet.");
   if (state === "SKIPPED" && child.required) throw new ValidationError("Required Routine children cannot be skipped.");
   if (state === "SKIPPED" && child.allowSkip !== true) throw new ValidationError("Skipping this Routine child is not allowed.");
   if (state === "SKIPPED" && child.requireSkipReason && !String(reason || "").trim()) throw new ValidationError("A skip reason is required.");
