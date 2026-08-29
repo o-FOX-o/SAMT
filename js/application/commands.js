@@ -603,6 +603,36 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         return clone(state.blocks[index]);
       });
     },
+    resolveCycleSlot(id, { outcome = "completed", reason = null } = {}) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index, item: cycle } = requireStateItem(state.blocks, id, "Cycle");
+        if (cycle.type !== "cycle") throw new ValidationError("Block is not a Cycle.");
+        const runtime = ensureCycleRuntime(state, cycle);
+        const slot = currentGeneratedCycleSlot(runtime.big, runtime.small);
+        if (!slot) throw new ValidationError("This Cycle has no generated slot to resolve.");
+        const relationship = (cycle.relationships || []).find((candidate) => candidate.id === slot.relationshipId);
+        if (outcome === "skipped" && relationship?.config?.allowSkip !== true) throw new ValidationError("Skipping this Cycle relationship is not allowed.");
+        if (outcome === "skipped" && relationship?.config?.requireSkipReason && !String(reason || "").trim()) throw new ValidationError("A skip reason is required.");
+        const slotIndex = Math.max(0, Number(runtime.big.currentSlot ?? 0));
+        const resolved = resolveDomainCycleSlot({ slot, outcome, allowSkip: relationship?.config?.allowSkip === true, reason, now: now() });
+        let updatedBig = recordCycleResolution({
+          bigCycle: runtime.big,
+          smallCycle: runtime.small,
+          relationshipId: resolved.relationshipId,
+          slot: slotIndex,
+          outcome: resolved.outcome,
+          now: now()
+        });
+        if (!["deferred", "unavailable"].includes(outcome)) updatedBig = advanceGeneratedCycleSlot(updatedBig, runtime.small, { steps: 1, now: now() });
+        state.cycleBigCycles[runtime.bigIndex] = updatedBig;
+        state.blocks[index] = { ...cycle, config: { ...(cycle.config || {}), currentSmallCycleId: runtime.small.id, currentSlot: updatedBig.currentSlot }, updatedAt: now().toISOString() };
+        touch();
+        addHistory({ type: "cycle", description: `Resolved Cycle slot: ${outcome}`, objectType: "cycle_resolution", objectId: resolved.relationshipId, metadata: { cycleId: id, smallCycleId: runtime.small.id, slot: slotIndex, outcome, reason: reason || null } });
+        emit(EVENT_TYPES.CYCLE_ADVANCED, { cycleId: id, smallCycleId: runtime.small.id, slot: updatedBig.currentSlot, outcome });
+        return clone({ cycle: state.blocks[index], bigCycle: updatedBig, smallCycle: runtime.small, resolution: resolved });
+      });
+    },
     generateCycleSmallCycle(id) {
       return repository.transaction(() => {
         const state = repository.getState();
