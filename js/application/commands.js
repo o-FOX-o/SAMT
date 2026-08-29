@@ -354,8 +354,8 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
           ...clone(patch),
           id: relationshipId,
           parentBlockId,
-          kind: before.kind,
-          refId: before.refId,
+          kind: patch.kind || before.kind,
+          refId: patch.refId || before.refId,
           config: { ...(before.config || {}), ...(clone(patch.config) || {}) },
           updatedAt: now().toISOString()
         };
