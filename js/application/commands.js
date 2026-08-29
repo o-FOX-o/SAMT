@@ -182,7 +182,7 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
       return finishDomainRun(next, "COMPLETED", stamp);
     }
     if (evaluation.status && !["NOT_STARTED", "PAUSED"].includes(run.status)) {
-      if (["COMPLETED", "PARTIAL", "MISSED"].includes(evaluation.status)) return finishDomainRun(next, evaluation.status, stamp);
+      if (["COMPLETED", "PARTIAL", "MISSED", "EXPIRED"].includes(evaluation.status)) return finishDomainRun(next, evaluation.status, stamp);
       next.status = evaluation.status;
     }
     return next;
