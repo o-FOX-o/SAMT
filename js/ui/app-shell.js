@@ -225,11 +225,39 @@ export function mountSamtApp(engine, documentRef = globalThis.document) {
     const data = new FormData(form); const config = {};
     if (type === "target") {
       const rawTarget = data.get("config.targetValue");
-      Object.assign(config, { mode: data.get("config.mode"), metric: data.get("config.metric"), targetValue: data.get("config.mode") === "outcome" ? String(rawTarget || "") : Number(rawTarget || 0), comparison: data.get("config.comparison") || ">=", period: data.get("config.period"), periodStyle: data.get("config.periodStyle") || "calendar", contributionScope: data.get("config.contributionScope") || "direct", sourceActionIds: data.getAll("sourceActionId"), sourceResultFieldId: data.get("config.sourceResultFieldId") || null, aggregation: data.get("config.aggregation") || "latest", unitId: data.get("config.unitId") || null });
-    } else if (type === "cycle") Object.assign(config, { generationMode: data.get("config.generationMode"), eligibility: data.get("config.eligibility"), smallCycleSize: data.get("config.smallCycleSize") ? Number(data.get("config.smallCycleSize")) : null, missedItemPolicy: data.get("config.missedItemPolicy") || "keep_position" });
-    else if (type === "routine") Object.assign(config, { completionMode: data.get("config.completionMode"), minimumCount: Number(data.get("config.minimumCount") || 0), minimumPercentage: Number(data.get("config.minimumPercentage") || 100), finishBehaviour: data.get("config.finishBehaviour") || "auto" });
-    else if (type === "project") Object.assign(config, { combination: data.get("config.combination"), finishBehaviour: data.get("config.finishBehaviour"), deadline: data.get("config.deadline") || null, conditions: [{ type: "all_required" }] });
-    else if (type === "action_list") Object.assign(config, { occurrencePolicy: data.get("config.occurrencePolicy") });
+      const mode = data.get("config.mode") || "accumulation";
+      Object.assign(config, {
+        mode,
+        metric: data.get("config.metric") || "time",
+        targetValue: mode === "outcome" ? String(rawTarget || "") : Number(rawTarget || 0),
+        comparison: data.get("config.comparison") || ">=",
+        period: data.get("config.period") || "day",
+        periodStyle: data.get("config.periodStyle") || "calendar",
+        rollingWindowDays: data.get("config.rollingWindowDays") === "" ? null : Number(data.get("config.rollingWindowDays")),
+        customStart: data.get("config.customStart") || null,
+        customEnd: data.get("config.customEnd") || null,
+        contributionScope: data.get("config.contributionScope") || "direct",
+        sourceActionIds: data.getAll("sourceActionId"),
+        sourceResultFieldId: data.get("config.sourceResultFieldId") || null,
+        aggregation: data.get("config.aggregation") || "latest",
+        unitId: data.get("config.unitId") || null,
+        requiredChildTargetIds: data.getAll("config.requiredChildTargetId")
+      });
+    } else if (type === "cycle") {
+      Object.assign(config, { generationMode: data.get("config.generationMode") || "simple_ordered", eligibility: data.get("config.eligibility") || "strict_order", smallCycleSize: data.get("config.smallCycleSize") ? Number(data.get("config.smallCycleSize")) : null, missedItemPolicy: data.get("config.missedItemPolicy") || "keep_position", periodEnd: data.get("config.periodEnd") || "never", positionPolicy: data.get("config.positionPolicy") || "continue" });
+    } else if (type === "routine") {
+      Object.assign(config, { completionMode: data.get("config.completionMode") || "required_only", minimumCount: Number(data.get("config.minimumCount") || 0), minimumPercentage: Number(data.get("config.minimumPercentage") || 100), finishBehaviour: data.get("config.finishBehaviour") || "auto" });
+    } else if (type === "workflow") {
+      Object.assign(config, { finishBehaviour: data.get("config.finishBehaviour") || "auto", progression: data.get("config.progression") || "ordered", deadline: data.get("config.deadline") || null });
+    } else if (type === "project") {
+      const conditionType = data.get("config.conditionType") || "all_required";
+      const condition = { type: conditionType };
+      if (["count", "percentage"].includes(conditionType)) condition.value = Number(data.get("config.conditionValue") || 0);
+      if (conditionType === "target") condition.targetId = data.get("config.conditionTargetId") || null;
+      if (conditionType === "milestone") condition.milestoneId = data.get("config.conditionMilestoneId") || null;
+      if (conditionType === "result") Object.assign(condition, { fieldId: data.get("config.conditionFieldId") || null, operator: data.get("config.conditionOperator") || ">=", value: data.get("config.conditionValue") || "", unitId: data.get("config.conditionUnitId") || null });
+      Object.assign(config, { combination: data.get("config.combination") || "all", finishBehaviour: data.get("config.finishBehaviour") || "ready", deadline: data.get("config.deadline") || null, deadlinePolicy: data.get("config.deadlinePolicy") || "continue_overdue", conditions: [condition] });
+    } else if (type === "action_list") Object.assign(config, { occurrencePolicy: data.get("config.occurrencePolicy") || "expire", listMode: data.get("config.listMode") || "open_ended" });
     return config;
   }
   function newBlockContent(state, type = "collection") { return `<form class="samt-form" data-form="new-block"><div class="samt-form-grid"><label>Name<input class="samt-input" name="name" required autofocus></label><label>Type<select class="samt-input" name="type" data-block-type>${Object.entries(BLOCK_LABELS).map(([key, label]) => `<option value="${key}" ${type === key ? "selected" : ""}>${label}</option>`).join("")}</select></label><label>Definition status<select class="samt-input" name="definitionStatus"><option value="LIBRARY">Library</option><option value="ACTIVE" selected>Active</option><option value="PAUSED">Paused</option></select></label></div><label>Description<textarea class="samt-input" name="description" rows="3"></textarea></label><div data-block-config>${configFieldsForNew(type, state)}</div><p class="samt-form-error" data-form-error role="alert"></p><button class="samt-button primary" type="submit">Create Block</button></form>`; }
