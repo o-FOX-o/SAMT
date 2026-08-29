@@ -7,3 +7,5 @@ export * from "./analysis.js";
 export * from "./lifecycle.js";
 export * from "./events.js";
 export * from "./normalization.js";
+export * from "./data-manager.js";
+export * from "./data-management.js";

@@ -23,9 +23,9 @@
         "units": { "type": "array", "items": { "$ref": "#/$defs/unit" } },
         "actions": { "type": "array", "items": { "$ref": "#/$defs/action" } },
         "blocks": { "type": "array", "items": { "$ref": "#/$defs/block" } },
-        "tasks": { "type": "array" }, "quickTasks": { "type": "array" }, "reviews": { "type": "array" },
+        "tasks": { "type": "array" }, "quickTasks": { "type": "array" }, "reviews": { "type": "array" }, "bin": { "type": "array" }, "tombstones": { "type": "array" }, "importHistory": { "type": "array" },
         "activations": { "type": "array" }, "runs": { "type": "array" }, "occurrences": { "type": "array" }, "periods": { "type": "array" },
-        "actionLogs": { "type": "array", "items": { "$ref": "#/$defs/log" } }, "history": { "type": "array" }
+        "actionLogs": { "type": "array", "items": { "$ref": "#/$defs/log" } }, "history": { "type": "array" }, "settings": { "type": "object" }, "meta": { "type": "object" }
       }
     },
     "category": { "type": "object", "required": ["id", "name", "scope", "status"], "properties": { "id": { "$ref": "#/$defs/id" }, "name": { "type": "string", "minLength": 1 }, "description": { "type": "string" }, "scope": { "enum": ["action", "result", "both"] }, "status": { "enum": ["active", "archived"] }, "createdAt": { "$ref": "#/$defs/timestamp" }, "updatedAt": { "$ref": "#/$defs/timestamp" } } },

@@ -15,9 +15,10 @@ compatibility and recovery artifact; it is not mounted by the V3 shell.
 | Analysis | MIGRATED + EXPANDED | V3 filters factual logs and distinguishes GLOBAL UNIQUE from attributed/inclusive totals and target/result analysis. |
 | History | MIGRATED + EXPANDED | V3 renders the chronological factual ledger, snapshots and lifecycle records. |
 | Capacity | MIGRATED | V3 capacity view reads the preserved capacity settings and factual time. |
-| Settings | MIGRATED + EXPANDED | V3 exposes timezone, week start, capacity, defaults, taxonomy, Units and data restore/import/export. |
-| Build functionality | MIGRATED + EXPANDED | V3 builders cover Categories, Tags, Units, Actions, Result Fields, Blocks and contextual relationships. |
-| Import/export | MIGRATED + EXPANDED | Schema-v2 packages remain compatible; schema-v3 packages use canonical validation and atomic restore points. |
+| Settings | MIGRATED + EXPANDED | V3 Settings is separated into General, Capacity, Defaults, Build, Import / Export, Data & Storage, Bin / Recently Deleted and App. It exposes indexed search/filter/select management, dependency-aware cleanup, restore points and a controlled empty-state reset. |
+| Build functionality | MIGRATED + EXPANDED | Settings links to the existing V3 builders for Categories, Tags, Units, Actions, Result Fields and Blocks. Blocks remain the single V3 model for Collection, Action List, Routine, Workflow, Project, Cycle and Target. |
+| Import/export | MIGRATED + EXPANDED | Full backups use the canonical V3 exporter; Action and Block packages include required definition dependencies without unrelated runtime history. File and pasted JSON use the same validated, migrated, restore-point-protected atomic importer, with preview, import history and undo. |
+| Data management | NEW V3 MANAGEMENT SURFACE | A derived Data Manager supports search, type/subtype, status, usage/history and date filters. Archive, Move to Bin and Permanent Delete are separate operations; Bin restore preserves stable IDs, while historical snapshots/tombstones protect factual History. |
 | Persistence | MIGRATED + EXPANDED | V2/V1 keys are read without overwrite; V3 uses a separate key and safe in-memory fallback. |
 | Startup | MIGRATED + EXPANDED | V3 opens with a genuinely empty state when no data exists; JSON is never required and blocked storage is non-fatal. |
 | Navigation | MIGRATED + EXPANDED | V3 exposes Home, Actions, Blocks, Cycles, To-do, Projects, Reviews, Analysis, History, Capacity and Settings through one router. |

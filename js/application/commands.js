@@ -16,6 +16,10 @@ import { advanceCyclePosition, createBigCycleRuntime, generateNextSmallCycle } f
 import { appendHistory } from "../domain/history.js";
 import { domainEvent, EVENT_TYPES } from "./events.js";
 import { importPackage } from "../import-export/importer.js";
+import { packageCounts } from "../import-export/exporter.js";
+import { validatePackage } from "../import-export/validator.js";
+import { createEmptyState } from "./normalization.js";
+import { appendRestorePoint, archiveDefinitionsInState, unarchiveDefinitionsInState, moveDefinitionsToBinInState, permanentlyDeleteDefinitionsInState, restoreDefinitionsInState, clearDataInState } from "./data-management.js";
 
 const TERMINAL_OCCURRENCES = ["completed", "skipped", "missed", "expired", "excused", "not_applicable"];
 
@@ -51,6 +55,45 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
     return { index, item: collection[index] };
   }
   function replaceAt(collection, index, value) { collection[index] = value; return value; }
+  function validateCurrentState(state) {
+    const checked = validatePackage(state);
+    if (!checked.ok) throw checked.error;
+    return state;
+  }
+  function validateTimezone(value) {
+    const timezone = String(value || "").trim();
+    if (!timezone) throw new ValidationError("Timezone is required.");
+    try { new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(); } catch { throw new ValidationError(`Timezone is not recognised: ${timezone}`); }
+    return timezone;
+  }
+  function normalizeSettingsPatch(state, patch = {}) {
+    const next = clone(patch) || {};
+    if (Object.prototype.hasOwnProperty.call(next, "timezone")) next.timezone = validateTimezone(next.timezone);
+    if (Object.prototype.hasOwnProperty.call(next, "weekStartsOn")) { next.weekStartsOn = Number(next.weekStartsOn); if (!Number.isInteger(next.weekStartsOn) || next.weekStartsOn < 0 || next.weekStartsOn > 6) throw new ValidationError("Week start must be a day from Sunday through Saturday."); }
+    if (next.capacity) {
+      const capacity = { availableMinutes: 0, periodDays: 7, ...(state.settings?.capacity || {}), ...next.capacity };
+      const availableMinutes = Number(capacity.availableMinutes); const periodDays = Number(capacity.periodDays);
+      if (!Number.isFinite(availableMinutes) || availableMinutes < 0 || !Number.isFinite(periodDays) || periodDays < 1 || periodDays > 365) throw new ValidationError("Capacity must be non-negative and its planning window must be 1–365 days.");
+      next.capacity = { ...capacity, availableMinutes, periodDays: Math.round(periodDays), updatedAt: now().toISOString() };
+    }
+    if (next.defaults) {
+      for (const key of ["targetAutoClose", "cycleAutoClose", "routineExpire", "actionListExpire"]) if (key in next.defaults) next.defaults[key] = Boolean(next.defaults[key]);
+      if (next.defaults.cyclePositionPolicy && !["continue", "restart"].includes(next.defaults.cyclePositionPolicy)) throw new ValidationError("Cycle position policy is invalid.");
+      if (next.defaults.cycleMissedItemPolicy && !["keep_position", "advance_to_next", "restart_small_cycle", "restart_big_cycle"].includes(next.defaults.cycleMissedItemPolicy)) throw new ValidationError("Cycle unfinished-item policy is invalid.");
+    }
+    if (next.appearanceMode && !["light", "dark", "system"].includes(next.appearanceMode)) throw new ValidationError("Appearance mode is invalid.");
+    return next;
+  }
+  function appendManagementHistory(state, description, objectType = "settings", objectId = null, metadata = {}) {
+    addHistory({ type: "management", description, objectType, objectId, metadata: { management: true, ...metadata } });
+  }
+  function importRecord(value, result, state) {
+    const summary = result?.summary || {};
+    state.importHistory = [...(state.importHistory || []), {
+      id: makeId("import"), importedAt: now().toISOString(), packageType: value?.packageType || summary.packageType || "backup", packageId: value?.packageId || summary.packageId || null,
+      packageName: value?.packageName || summary.packageName || value?.packageId || "SAMT package", counts: packageCounts(value), success: true, restorePointCreated: true
+    }].slice(-100);
+  }
 
   return {
     createCategory(input = {}) {
@@ -188,7 +231,41 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
     advanceCycle(id, steps = 1) { return repository.transaction(() => { const state = repository.getState(); const { index, item: cycle } = requireStateItem(state.blocks, id, "Cycle"); if (cycle.type !== "cycle") throw new ValidationError("Block is not a Cycle."); const next = advanceCyclePosition(cycle, { steps, now: now() }); replaceAt(state.blocks, index, next); touch(); addHistory({ type: "cycle", description: `Advanced Cycle: ${cycle.name}`, objectType: "block", objectId: id, snapshots: { from: cycle.config?.currentPosition || cycle.currentPosition || 0, to: next.config?.currentPosition || 0 } }); emit(EVENT_TYPES.CYCLE_ADVANCED, { cycleId: id, position: next.config?.currentPosition || 0 }); return clone(next); }); },
     generateCycleSmallCycle(id) { return repository.transaction(() => { const state = repository.getState(); const { index, item: cycle } = requireStateItem(state.blocks, id, "Cycle"); if (cycle.type !== "cycle") throw new ValidationError("Block is not a Cycle."); let big = (state.cycleBigCycles || []).find((item) => item.cycleId === id && item.status === "open"); if (!big) { big = createBigCycleRuntime({ cycleId: id, relationships: cycle.relationships || [], smallCycleSize: cycle.config?.smallCycleSize || null, fairness: cycle.config?.fairness || {}, config: cycle.config, now: now() }); state.cycleBigCycles.push(big); } const small = generateNextSmallCycle({ bigCycle: big, relationships: cycle.relationships || [], now: now() }); state.cycleSmallCycles.push(small); big.smallCycles = [...(big.smallCycles || []), { id: small.id, sequence: small.slots, generatedAt: small.generatedAt }]; big.fairness = small.fairness; big.appearanceCoverage = small.coverage; if (big.participantRelationshipIds.every((relationshipId) => big.appearanceCoverage.includes(relationshipId))) { big.status = "completed"; big.completedAt = now().toISOString(); } state.blocks[index] = { ...cycle, config: { ...(cycle.config || {}), currentSmallCycleId: small.id }, updatedAt: now().toISOString() }; touch(); addHistory({ type: "cycle", description: `Generated Small Cycle: ${cycle.name}`, objectType: "cycleSmallCycle", objectId: small.id, snapshots: { sequence: small.slots } }); return clone(small); }); },
     closePeriod(id, evaluation) { return repository.transaction(() => { const state = repository.getState(); const { index } = requireStateItem(state.periods, id, "Period"); const period = state.periods[index]; if (period.status === "closed") return clone(period); const closed = { ...period, status: "closed", closedAt: now().toISOString(), evaluation: clone(evaluation) }; state.periods[index] = closed; if (!state.targetEvaluations.some((item) => item.periodId === id)) state.targetEvaluations.push({ id: `${id}:evaluation`, periodId: id, ownerId: period.ownerId, evaluation: clone(evaluation), closedAt: closed.closedAt, snapshot: clone(period.snapshot) }); touch(); addHistory({ type: "period", description: "Closed evaluation period", objectType: "period", objectId: id, snapshots: { evaluation } }); emit(EVENT_TYPES.PERIOD_CLOSED, { periodId: id }); return clone(closed); }); },
-    updateSettings(patch = {}) { return repository.transaction(() => { const state = repository.getState(); state.settings = { ...(state.settings || {}), ...clone(patch), defaults: { ...(state.settings?.defaults || {}), ...(patch.defaults || {}) }, capacity: { ...(state.settings?.capacity || {}), ...(patch.capacity || {}) } }; touch(); addHistory({ type: "settings", description: "Updated Settings", objectType: "settings", snapshots: { patch: clone(patch) } }); return clone(state.settings); }); },
+    updateSettings(patch = {}) {
+      return repository.transaction(() => {
+        const state = repository.getState(); const nextPatch = normalizeSettingsPatch(state, patch);
+        state.settings = { ...(state.settings || {}), ...nextPatch, defaults: { ...(state.settings?.defaults || {}), ...(nextPatch.defaults || {}) }, capacity: { ...(state.settings?.capacity || {}), ...(nextPatch.capacity || {}) } };
+        touch(); addHistory({ type: "settings", description: "Updated Settings", objectType: "settings", snapshots: { patch: clone(nextPatch) } }); return clone(state.settings);
+      });
+    },
+    archiveDefinitions(selections) {
+      return repository.transaction(() => { const state = repository.getState(); const archived = archiveDefinitionsInState(state, selections, { now: now() }); validateCurrentState(state); touch(); appendManagementHistory(state, `Archived ${archived.length} definition${archived.length === 1 ? "" : "s"}.`, "definitions", null, { selections: clone(archived) }); return clone(archived); });
+    },
+    unarchiveDefinitions(selections) {
+      return repository.transaction(() => { const state = repository.getState(); const restored = unarchiveDefinitionsInState(state, selections, { now: now() }); validateCurrentState(state); touch(); appendManagementHistory(state, `Unarchived ${restored.length} definition${restored.length === 1 ? "" : "s"}.`, "definitions", null, { selections: clone(restored) }); return clone(restored); });
+    },
+    moveDefinitionsToBin(selections, options = {}) {
+      return repository.transaction(() => {
+        const state = repository.getState(); const selected = clone(selections); const shouldPoint = options.createRestorePoint !== false;
+        if (shouldPoint) appendRestorePoint(state, { id: makeId("restore_point"), reason: "Move definitions to Bin", now: now() });
+        const moved = moveDefinitionsToBinInState(state, selected, { ...options, now: now() }); validateCurrentState(state); touch(); appendManagementHistory(state, `Moved ${moved.length} definition${moved.length === 1 ? "" : "s"} to the Bin.`, "bin", null, { selections: clone(moved) }); return clone(moved);
+      });
+    },
+    permanentlyDeleteDefinitions(selections, options = {}) {
+      return repository.transaction(() => {
+        const state = repository.getState(); appendRestorePoint(state, { id: makeId("restore_point"), reason: "Permanent delete", now: now() });
+        const result = permanentlyDeleteDefinitionsInState(state, selections, { ...options, now: now() }); validateCurrentState(state); touch(); appendManagementHistory(state, `Permanently deleted ${result.deleted.length} definition${result.deleted.length === 1 ? "" : "s"}.`, "definitions", null, { selections: clone(result.deleted), tombstones: result.tombstones }); return clone(result);
+      });
+    },
+    restoreDefinitions(selections, options = {}) {
+      return repository.transaction(() => { const state = repository.getState(); const restored = restoreDefinitionsInState(state, selections, options); validateCurrentState(state); touch(); appendManagementHistory(state, `Restored ${restored.length} definition${restored.length === 1 ? "" : "s"} from the Bin.`, "bin", null, { selections: clone(restored) }); return clone(restored); });
+    },
+    clearData(options = {}) {
+      return repository.transaction(() => {
+        const state = repository.getState(); appendRestorePoint(state, { id: makeId("restore_point"), reason: "Clear selected data", now: now() });
+        const result = clearDataInState(state, { ...options, now: now() }); validateCurrentState(state); touch(); appendManagementHistory(state, "Cleared selected SAMT data.", "settings", null, { categories: clone(options.categories || []), result: clone(result) }); return clone(result);
+      });
+    },
     setPrimaryProject(id) { return this.updateSettings({ primaryProjectId: id || null }); },
     createTask(input = {}) { return repository.transaction(() => { const state = repository.getState(); const task = { id: input.id || makeId("task"), name: String(input.name || "").trim(), actionId: input.actionId || null, type: input.type || "one_time", targetDate: input.targetDate || null, status: input.status || "active", notes: String(input.notes || ""), createdAt: new Date(input.createdAt || now()).toISOString(), resolvedAt: null }; if (!task.name) throw new ValidationError("Task name is required."); state.tasks.push(task); touch(); addHistory({ type: "task", description: `Created Task: ${task.name}`, objectType: "task", objectId: task.id }); return clone(task); }); },
     completeTask(id) { return repository.transaction(() => { const state = repository.getState(); const { index } = requireStateItem(state.tasks, id, "Task"); state.tasks[index] = { ...state.tasks[index], status: "completed", resolvedAt: now().toISOString() }; touch(); addHistory({ type: "task", description: `Completed Task: ${state.tasks[index].name}`, objectType: "task", objectId: id }); return clone(state.tasks[index]); }); },
@@ -198,7 +275,29 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
     createReview(input = {}) { return repository.transaction(() => { const state = repository.getState(); const review = { id: input.id || makeId("review"), name: String(input.name || "").trim(), date: input.date || now().toISOString().slice(0, 10), notes: String(input.notes || ""), status: input.status || "draft", createdAt: new Date(now()).toISOString(), updatedAt: new Date(now()).toISOString(), completedAt: null }; if (!review.name) throw new ValidationError("Review name is required."); state.reviews.push(review); touch(); addHistory({ type: "review", description: `Created Review: ${review.name}`, objectType: "review", objectId: review.id }); return clone(review); }); },
     updateReview(id, patch = {}) { return repository.transaction(() => { const state = repository.getState(); const { index } = requireStateItem(state.reviews, id, "Review"); state.reviews[index] = { ...state.reviews[index], ...clone(patch), id, updatedAt: now().toISOString() }; touch(); return clone(state.reviews[index]); }); },
     completeReview(id) { return this.updateReview(id, { status: "completed", completedAt: now().toISOString() }); },
-    importPackage(packageValue, options = {}) { return repository.transaction(() => { const state = repository.getState(); const result = importPackage(packageValue, { ...options, existingState: state, now: now() }); const next = result.state; next.meta = next.meta || {}; next.meta.restorePoints = [...(next.meta.restorePoints || []), { createdAt: now().toISOString(), state: clone(result.restorePoint) }].slice(-5); repository.replaceState(next, { persist: false }); addHistory({ type: "import", description: "Imported SAMT package", metadata: { restorePoint: true } }); touch(); return result; }); },
-    restoreLastImport() { return repository.transaction(() => { const state = repository.getState(); const point = state.meta?.restorePoints?.at(-1); if (!point?.state) throw new ValidationError("No import restore point is available."); repository.replaceState(clone(point.state), { persist: false }); addHistory({ type: "restore", description: "Restored the state before the last import", metadata: { restorePoint: true } }); touch(); return clone(repository.getState()); }); }
+    importPackage(packageValue, options = {}) {
+      return repository.transaction(() => {
+        const state = repository.getState(); const result = importPackage(packageValue, { ...options, existingState: state, now: now() }); const next = result.state; next.meta = next.meta || {};
+        next.meta.restorePoints = [...(next.meta.restorePoints || []), { id: makeId("restore_point"), createdAt: now().toISOString(), reason: "Import package", state: clone(result.restorePoint) }].slice(-10);
+        repository.replaceState(next, { persist: false }); const imported = repository.getState(); importRecord(packageValue, result, imported); addHistory({ type: "import", description: "Imported SAMT package", metadata: { restorePoint: true, packageType: packageValue?.packageType || "backup" } }); touch(); validateCurrentState(imported); return result;
+      });
+    },
+    restoreLastImport() {
+      return repository.transaction(() => {
+        const state = repository.getState(); const points = (state.meta?.restorePoints || []).filter((point) => /import/i.test(point.reason || "")); const point = points.at(-1);
+        if (!point?.state) throw new ValidationError("No import restore point is available."); repository.replaceState(clone(point.state), { persist: false }); addHistory({ type: "restore", description: "Restored the state before the last import", metadata: { restorePoint: true, reason: "Import package" } }); touch(); validateCurrentState(repository.getState()); return clone(repository.getState());
+      });
+    },
+    restorePoint(id = null) {
+      return repository.transaction(() => {
+        const state = repository.getState(); const point = id ? (state.meta?.restorePoints || []).find((candidate) => candidate.id === id) : state.meta?.restorePoints?.at(-1);
+        if (!point?.state) throw new ValidationError("That restore point is no longer available."); repository.replaceState(clone(point.state), { persist: false }); addHistory({ type: "restore", description: `Restored point ${point.reason || point.id || "from Settings"}`, metadata: { restorePoint: true, restorePointId: point.id || null } }); touch(); validateCurrentState(repository.getState()); return clone(repository.getState());
+      });
+    },
+    clearEverything() {
+      return repository.transaction(() => {
+        const state = repository.getState(); const point = { id: makeId("restore_point"), createdAt: now().toISOString(), reason: "Clear Everything / Start Fresh", state: clone(state) }; const empty = createEmptyState(now()); empty.meta.restorePoints = [...(state.meta?.restorePoints || []), point].slice(-10); repository.replaceState(empty, { persist: false }); validateCurrentState(repository.getState()); return clone(repository.getState());
+      });
+    }
   };
 }

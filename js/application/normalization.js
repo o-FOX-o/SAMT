@@ -14,9 +14,9 @@ export function createEmptyState(now = new Date()) {
     categories: [], tags: [], units: clone(BUILTIN_UNITS), actions: [], blocks: [], tasks: [], quickTasks: [], reviews: [],
     activations: [], runs: [], occurrences: [], periods: [], actionLogs: [],
     targetEvaluations: [], cycleSmallCycles: [], cycleBigCycles: [],
-    scopeChangeEvents: [], lifecycleEvents: [], history: [],
+    scopeChangeEvents: [], lifecycleEvents: [], history: [], bin: [], tombstones: [], importHistory: [],
     settings: {
-      timezone: "Europe/London", weekStartsOn: 1, primaryProjectId: null,
+      timezone: "Europe/London", weekStartsOn: 1, appearanceMode: "system", primaryProjectId: null,
       capacity: { availableMinutes: 0, periodDays: 7, updatedAt: stamp },
       defaults: {
         targetAutoClose: true, cycleAutoClose: true,
@@ -85,6 +85,14 @@ export function migrateV2State(oldState, { now = new Date() } = {}) {
   state.tasks = (oldState?.actionTasks || []).map((task, index) => ({ ...clone(task), id: task.id || `migrated_task_${index + 1}`, actionId: task.actionId || null, status: task.status || "active" }));
   state.quickTasks = clone(oldState?.quickTasks || []);
   state.reviews = clone(oldState?.reviews || []);
+  const customUnits = (oldState?.units || []).filter((unit) => !state.units.some((candidate) => candidate.id === unit.id)).map((unit) => ({ ...clone(unit), status: unit.status === "archived" ? "archived" : "active", builtIn: Boolean(unit.builtIn) }));
+  state.units = [...state.units, ...customUnits];
+  state.bin = clone(oldState?.bin || []);
+  state.tombstones = clone(oldState?.tombstones || []);
+  state.importHistory = clone(oldState?.importHistory || []);
+  state.settings.timezone = oldState?.settings?.timezone || state.settings.timezone;
+  state.settings.weekStartsOn = Number.isInteger(Number(oldState?.settings?.weekStartsOn ?? oldState?.settings?.weekStart)) ? Number(oldState.settings.weekStartsOn ?? oldState.settings.weekStart) : state.settings.weekStartsOn;
+  state.settings.defaults = { ...state.settings.defaults, ...(clone(oldState?.settings?.defaults || oldState?.settings?.behaviourDefaults) || {}) };
   state.settings.capacity = clone(oldState?.settings?.capacity || state.settings.capacity);
   state.legacy = { sourceSchemaVersion: oldState?.schemaVersion || "2.x", sourceState: clone(oldState), runtime: { actionTasks: clone(oldState?.actionTasks || []), quickTasks: clone(oldState?.quickTasks || []), reviews: clone(oldState?.reviews || []), settings: clone(oldState?.settings || {}) } };
   state.updatedAt = stamp; return state;
@@ -105,8 +113,10 @@ function migrateLegacyResult(action, index = 0) {
 export function normalizeState(value, options = {}) {
   if (!isV3State(value)) return migrateV2State(value, options);
   const state = clone(value); const empty = createEmptyState(options.now || new Date());
-  for (const key of ["categories", "tags", "units", "actions", "blocks", "tasks", "quickTasks", "reviews", "activations", "runs", "occurrences", "periods", "actionLogs", "targetEvaluations", "cycleSmallCycles", "cycleBigCycles", "scopeChangeEvents", "lifecycleEvents", "history"]) if (!Array.isArray(state[key])) state[key] = clone(empty[key]);
-  state.settings = { ...empty.settings, ...(state.settings || {}), defaults: { ...empty.settings.defaults, ...(state.settings?.defaults || {}) }, capacity: { ...empty.settings.capacity, ...(state.settings?.capacity || {}) } };
+  for (const key of ["categories", "tags", "units", "actions", "blocks", "tasks", "quickTasks", "reviews", "activations", "runs", "occurrences", "periods", "actionLogs", "targetEvaluations", "cycleSmallCycles", "cycleBigCycles", "scopeChangeEvents", "lifecycleEvents", "history", "bin", "tombstones", "importHistory"]) if (!Array.isArray(state[key])) state[key] = clone(empty[key]);
+  const sourceDefaults = state.settings?.defaults || state.settings?.behaviourDefaults || {};
+  state.settings = { ...empty.settings, ...(state.settings || {}), weekStartsOn: Number(state.settings?.weekStartsOn ?? state.settings?.weekStart ?? empty.settings.weekStartsOn), defaults: { ...empty.settings.defaults, ...sourceDefaults }, capacity: { ...empty.settings.capacity, ...(state.settings?.capacity || {}) } };
+  state.meta = { ...empty.meta, ...(state.meta || {}), appliedCommandIds: [...(state.meta?.appliedCommandIds || [])], events: [...(state.meta?.events || [])], restorePoints: [...(state.meta?.restorePoints || [])].map((point, index) => ({ ...point, id: point.id || `restore_point_migrated_${index + 1}` })) };
   if ((!state.tasks.length && state.legacy?.runtime?.actionTasks?.length)) state.tasks = clone(state.legacy.runtime.actionTasks);
   if ((!state.quickTasks.length && state.legacy?.runtime?.quickTasks?.length)) state.quickTasks = clone(state.legacy.runtime.quickTasks);
   if ((!state.reviews.length && state.legacy?.runtime?.reviews?.length)) state.reviews = clone(state.legacy.runtime.reviews);

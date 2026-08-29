@@ -2,7 +2,7 @@ import { clone } from "../shared/validation.js";
 import { NotFoundError } from "../shared/errors.js";
 
 export function createRepository({ state, persist = () => true } = {}) {
-  const initial = clone(state || {}); const arrayKeys = ["categories", "tags", "units", "actions", "blocks", "tasks", "quickTasks", "reviews", "activations", "runs", "occurrences", "periods", "actionLogs", "targetEvaluations", "cycleSmallCycles", "cycleBigCycles", "scopeChangeEvents", "lifecycleEvents", "history"];
+  const initial = clone(state || {}); const arrayKeys = ["categories", "tags", "units", "actions", "blocks", "tasks", "quickTasks", "reviews", "activations", "runs", "occurrences", "periods", "actionLogs", "targetEvaluations", "cycleSmallCycles", "cycleBigCycles", "scopeChangeEvents", "lifecycleEvents", "history", "bin", "tombstones", "importHistory"];
   let current = initial || {}; for (const key of arrayKeys) if (!Array.isArray(current[key])) current[key] = [];
   let lastPersistenceError = null;
   function safePersist() { try { const result = persist(current); lastPersistenceError = null; return result !== false; } catch (error) { lastPersistenceError = error; return false; } }

@@ -2,6 +2,7 @@ import { ImportError } from "../shared/errors.js";
 import { clone, isPlainObject, normalizedKey } from "../shared/validation.js";
 import { createEmptyState, normalizeState } from "../application/normalization.js";
 import { validatePackage } from "./validator.js";
+import { packageCounts } from "./exporter.js";
 
 const LEGACY_PACKAGE_TYPES = new Set(["action-package", "block-package", "style-package", "backup"]);
 const MERGE_KEYS = ["categories", "tags", "units", "actions", "blocks", "activations", "runs", "occurrences", "periods", "actionLogs", "targetEvaluations", "cycleSmallCycles", "cycleBigCycles", "scopeChangeEvents", "lifecycleEvents", "history", "tasks", "quickTasks", "reviews"];
@@ -32,7 +33,8 @@ function validateLegacyEnvelope(value) {
   }
   if (value.packageType === "backup" && value.rootObjectIds.length) throw new ImportError("A Full Backup cannot declare reusable roots.");
   if (value.packageType !== "backup") {
-    const roots = new Set((value.data.actions || value.data.blocks || value.data.styles || []).map((row) => row.id));
+    const rootRows = value.packageType === "action-package" ? value.data.actions : value.packageType === "block-package" ? value.data.blocks : value.data.styles;
+    const roots = new Set((rootRows || []).map((row) => row.id));
     if (value.rootObjectIds.some((id) => !roots.has(id))) throw new ImportError("A package root is missing from its data.");
   }
   return true;
@@ -55,6 +57,10 @@ function migrateLegacyEnvelope(value, now) {
     direction: action.direction || (action.polarity === "negative" ? "avoid" : "do")
   }));
   const migrated = normalizeState(source, { now });
+  // Reusable V3 packages carry their exact taxonomy records. The legacy
+  // state migrator historically generated one tag per Category, which would
+  // lose custom Tag IDs from an exported Action/Block package.
+  if (Array.isArray(data.tags)) migrated.tags = clone(data.tags);
   migrated.legacy = {
     ...(migrated.legacy || {}),
     sourcePackage: {
@@ -82,9 +88,12 @@ function buildIdMap(existingRows = [], incomingRows = [], key = (row) => normali
 
 function rewriteLegacyRecords(incoming, maps) {
   const rewriteId = (map, id) => id && map.get(id) || id;
-  incoming.tags = (incoming.tags || []).map((tag) => ({ ...tag, categoryId: rewriteId(maps.categories, tag.categoryId) }));
+  incoming.categories = (incoming.categories || []).map((category) => ({ ...category, id: rewriteId(maps.categories, category.id) }));
+  incoming.units = (incoming.units || []).map((unit) => ({ ...unit, id: rewriteId(maps.units, unit.id), baseUnitId: rewriteId(maps.units, unit.baseUnitId) }));
+  incoming.tags = (incoming.tags || []).map((tag) => ({ ...tag, id: rewriteId(maps.tags, tag.id), categoryId: rewriteId(maps.categories, tag.categoryId) }));
   incoming.actions = (incoming.actions || []).map((action) => ({
     ...action,
+    id: rewriteId(maps.actions, action.id),
     tagIds: (action.tagIds || []).map((id) => rewriteId(maps.tags, id)),
     resultFields: (action.resultFields || []).map((field) => ({
       ...field,
@@ -118,6 +127,11 @@ function rewriteLegacyRecords(incoming, maps) {
   incoming.activations = (incoming.activations || []).map((activation) => ({ ...activation, blockId: rewriteId(maps.blocks, activation.blockId) }));
   incoming.occurrences = (incoming.occurrences || []).map((occurrence) => ({ ...occurrence, relationshipId: rewriteId(maps.relationships, occurrence.relationshipId), logIds: (occurrence.logIds || []).map((id) => rewriteId(maps.actionLogs, id)) }));
   incoming.periods = (incoming.periods || []).map((period) => ({ ...period, ownerId: rewriteId(maps.blocks, period.ownerId || period.blockId) }));
+  incoming.targetEvaluations = (incoming.targetEvaluations || []).map((evaluation) => ({ ...evaluation, ownerId: rewriteId(maps.blocks, evaluation.ownerId), periodId: rewriteId(maps.periods, evaluation.periodId) }));
+  incoming.cycleSmallCycles = (incoming.cycleSmallCycles || []).map((cycle) => ({ ...cycle, cycleId: rewriteId(maps.blocks, cycle.cycleId), bigCycleId: rewriteId(maps.cycleBigCycles, cycle.bigCycleId) }));
+  incoming.cycleBigCycles = (incoming.cycleBigCycles || []).map((cycle) => ({ ...cycle, cycleId: rewriteId(maps.blocks, cycle.cycleId), smallCycles: (cycle.smallCycles || []).map((small) => ({ ...small, id: rewriteId(maps.cycleSmallCycles, small.id) })) }));
+  incoming.scopeChangeEvents = (incoming.scopeChangeEvents || []).map((event) => ({ ...event, blockId: rewriteId(maps.blocks, event.blockId), runIds: (event.runIds || []).map((id) => rewriteId(maps.runs, id)) }));
+  incoming.history = (incoming.history || []).map((event) => ({ ...event, objectId: rewriteId(maps.actions, rewriteId(maps.blocks, event.objectId)), actionId: rewriteId(maps.actions, event.actionId), blockId: rewriteId(maps.blocks, event.blockId), ownerId: rewriteId(maps.blocks, event.ownerId) }));
   return incoming;
 }
 
@@ -131,9 +145,9 @@ function mergeLegacyPackage(existingState, incomingState, envelope, now) {
     blocks: buildIdMap(result.blocks, incoming.blocks)
   };
   maps.tags = buildIdMap(result.tags, incoming.tags, (row) => `${rewriteCategoryKey(row, maps.categories)}:${normalizedKey(row.name)}`);
-  maps.relationships = new Map(); maps.actionLogs = new Map(); maps.runs = new Map(); maps.occurrences = new Map(); maps.activations = new Map();
+  maps.relationships = new Map(); maps.actionLogs = new Map(); maps.runs = new Map(); maps.occurrences = new Map(); maps.activations = new Map(); maps.periods = new Map(); maps.cycleSmallCycles = new Map(); maps.cycleBigCycles = new Map();
   for (const block of incoming.blocks || []) for (const relationship of block.relationships || []) maps.relationships.set(relationship.id, relationship.id);
-  for (const key of ["actionLogs", "runs", "occurrences", "activations"]) for (const row of incoming[key] || []) maps[key].set(row.id, row.id);
+  for (const key of ["actionLogs", "runs", "occurrences", "activations", "periods", "cycleSmallCycles", "cycleBigCycles"]) for (const row of incoming[key] || []) maps[key].set(row.id, row.id);
   rewriteLegacyRecords(incoming, maps);
   const allowed = envelope.packageType === "action-package" ? new Set(["categories", "tags", "units", "actions"]) : envelope.packageType === "block-package" ? new Set(["categories", "tags", "units", "actions", "blocks", "activations", "runs", "occurrences", "periods", "actionLogs", "targetEvaluations", "cycleSmallCycles", "cycleBigCycles", "scopeChangeEvents", "lifecycleEvents", "history"]) : new Set(MERGE_KEYS);
   for (const key of MERGE_KEYS) {
@@ -166,6 +180,36 @@ export function importPackage(packageValue, { existingState = null, now = new Da
   const candidate = normalizeState(raw, { now }); const checked = validatePackage(candidate); if (!checked.ok) throw checked.error;
   if (conflict === "preserve_existing" && existingState) return { state: mergePreservingExisting(existingState, candidate), restorePoint: clone(existingState) };
   return { state: clone(candidate), restorePoint: clone(existingState) };
+}
+
+export function previewImport(packageValue, { existingState = null, now = new Date(), conflict = "replace" } = {}) {
+  const result = importPackage(packageValue, { existingState, now, conflict });
+  const data = packageValue?.data || packageValue?.state || packageValue || {};
+  const packageType = packageValue?.packageType || (packageValue?.format === "life-command" ? "backup" : "backup");
+  const packageId = packageValue?.packageId || packageValue?.meta?.packageId || `samt_${packageType}`;
+  const existing = existingState || {};
+  const definitionKeys = ["categories", "tags", "units", "actions", "blocks"];
+  const existingIds = new Set(definitionKeys.flatMap((key) => (existing[key] || []).map((row) => row.id)));
+  const incomingIds = definitionKeys.flatMap((key) => (data[key] || []).map((row) => row.id));
+  const sameNameActions = new Set((data.actions || []).filter((action) => {
+    const key = normalizedKey(action.name);
+    return key && (existing.actions || []).some((current) => current.id !== action.id && normalizedKey(current.name) === key);
+  }).map((action) => action.id));
+  return {
+    ...result,
+    summary: {
+      packageType,
+      packageId,
+      packageName: packageValue?.packageName || packageValue?.name || packageId,
+      counts: packageCounts(packageValue),
+      conflicts: {
+        existingIds: new Set(incomingIds.filter((id) => existingIds.has(id))).size,
+        sameNameActions: sameNameActions.size,
+        invalidReferences: 0
+      },
+      restorePointCreated: Boolean(existingState)
+    }
+  };
 }
 
 function mergePreservingExisting(existing, incoming) {

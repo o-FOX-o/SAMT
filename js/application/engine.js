@@ -9,5 +9,5 @@ export function createEngine({ repository = null, storage = undefined, clock = s
   const currentClock = typeof clock === "function" ? { now: clock, timezone: () => "UTC" } : clock; const timestamp = now || currentClock.now();
   const repo = repository || createBrowserRepository({ storage, key, clock: timestamp });
   const commands = createCommands(repo, { clock: currentClock.now, idFactory: (prefix) => createId(prefix, currentClock.now()) }); const queries = createQueries(repo, { clock: currentClock.now });
-  return { repository: repo, commands, queries, reconcile: (options = {}) => reconcileTemporalState({ repository: repo, now: options.now || currentClock.now(), timezone: options.timezone || currentClock.timezone() }), getState: () => repo.getState() };
+  return { repository: repo, commands, queries, reconcile: (options = {}) => { const state = repo.getState(); return reconcileTemporalState({ repository: repo, now: options.now || currentClock.now(), timezone: options.timezone || state.settings?.timezone || currentClock.timezone() }); }, getState: () => repo.getState() };
 }
