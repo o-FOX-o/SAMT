@@ -22,7 +22,7 @@ import { importPackage } from "../import-export/importer.js";
 import { packageCounts } from "../import-export/exporter.js";
 import { validatePackage } from "../import-export/validator.js";
 import { createEmptyState } from "./normalization.js";
-import { appendRestorePoint, archiveDefinitionsInState, unarchiveDefinitionsInState, moveDefinitionsToBinInState, permanentlyDeleteDefinitionsInState, restoreDefinitionsInState, clearDataInState } from "./data-management.js";
+import { appendRestorePoint, archiveDefinitionsInState, unarchiveDefinitionsInState, moveDefinitionsToBinInState, permanentlyDeleteDefinitionsInState, restoreDefinitionsInState, clearDataInState, getRuntimeDeletionImpact, permanentlyDeleteRuntimeRecordsInState } from "./data-management.js";
 
 const TERMINAL_OCCURRENCES = ["completed", "skipped", "missed", "expired", "excused", "not_applicable"];
 
@@ -641,6 +641,25 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
     },
     restoreDefinitions(selections, options = {}) {
       return repository.transaction(() => { const state = repository.getState(); const restored = restoreDefinitionsInState(state, selections, options); validateCurrentState(state); touch(); appendManagementHistory(state, `Restored ${restored.length} definition${restored.length === 1 ? "" : "s"} from the Bin.`, "bin", null, { selections: clone(restored) }); return clone(restored); });
+    },
+    previewRuntimeDeletion(selections = []) {
+      const state = repository.getState();
+      return clone(getRuntimeDeletionImpact(state, selections));
+    },
+    permanentlyDeleteRuntimeRecords(selections = [], options = {}) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const impact = getRuntimeDeletionImpact(state, selections);
+        appendRestorePoint(state, { id: makeId("restore_point"), reason: "Permanent delete runtime records", now: now() });
+        const result = permanentlyDeleteRuntimeRecordsInState(state, selections, { ...options, now: now() });
+        validateCurrentState(state);
+        touch();
+        appendManagementHistory(state, `Permanently deleted ${result.deleted.length} runtime/data record${result.deleted.length === 1 ? "" : "s"}.`, "runtime", null, { impact: clone(impact) });
+        return clone(result);
+      });
+    },
+    deleteSelectedRuntimeRecords(selections = [], options = {}) {
+      return this.permanentlyDeleteRuntimeRecords(selections, options);
     },
     clearData(options = {}) {
       return repository.transaction(() => {
