@@ -65,18 +65,59 @@ export function projectProgressFromRun(run = {}) {
   return { total: children.length, completed: children.filter(isSatisfied).length, requiredCount: required.length, requiredCompleted: satisfied.length, percentage: children.length ? children.filter(isSatisfied).length / children.length * 100 : 0, required, completedCount: satisfied.length, completedPercentage: required.length ? satisfied.length / required.length * 100 : 0 };
 }
 
+function projectChildrenForEvaluation(run, now) {
+  const source = run?.children || run?.runtime?.children || [];
+  const satisfiedIds = new Set(source.filter(isSatisfied).map((child) => child.relationshipId || child.id));
+  const current = new Date(now);
+  return source.map((child) => {
+    if (["COMPLETED", "SKIPPED", "EXCUSED", "NOT_APPLICABLE", "CANCELLED", "BLOCKED"].includes(child.state)) return child;
+    const dependencyIds = child.dependencyIds || [];
+    if (dependencyIds.some((id) => !satisfiedIds.has(id))) return { ...child, state: "LOCKED", available: false };
+    if (child.availableFrom && Number.isFinite(new Date(child.availableFrom).getTime()) && current < new Date(child.availableFrom)) {
+      return { ...child, state: "LOCKED", available: false };
+    }
+    if (child.deadline && Number.isFinite(new Date(child.deadline).getTime()) && current >= new Date(child.deadline)) {
+      return { ...child, state: "OVERDUE", available: true, overdueAt: child.overdueAt || current.toISOString() };
+    }
+    return { ...child, state: child.state === "LOCKED" ? "AVAILABLE" : child.state, available: true };
+  });
+}
+
 export function evaluateProjectRun({ project = null, run = null, required = [], completedCount = 0, completedPercentage = 0, targets = {}, results = {}, milestones = {}, manual = false, resultFields = {}, units = [], now = new Date(), finished = false } = {}) {
-  const source = project || run?.snapshot?.block || run?.snapshot || {}; const config = projectConfig(source); const progress = run ? projectProgressFromRun(run) : { required, completedCount, completedPercentage };
-  const runtimeMilestones = Array.isArray(run?.runtime?.milestones) ? Object.fromEntries(run.runtime.milestones.map((milestone) => [milestone.id, milestone])) : (run?.runtime?.milestones || {});
-  const conditionResult = evaluateProjectConditions({ conditions: config.conditions || [{ type: "all_required" }], context: { required: progress.required || required, completedCount: progress.completedCount ?? completedCount, completedPercentage: progress.completedPercentage ?? completedPercentage, targets, results, milestones: { ...runtimeMilestones, ...milestones }, manual, resultFields, units }, combination: config.combination || "all" });
-  const qualified = conditionResult.satisfied; const deadline = run?.deadline || config.deadline || null; const deadlineReached = Boolean(deadline && new Date(now) >= new Date(deadline)); const finishBehaviour = config.finishBehaviour || "ready";
+  const source = project || run?.snapshot?.block || run?.snapshot || {};
+  const config = projectConfig(source);
+  const evaluatedChildren = run ? projectChildrenForEvaluation(run, now) : [];
+  const evaluatedRun = run ? { ...run, children: evaluatedChildren } : null;
+  const progress = run ? projectProgressFromRun(evaluatedRun) : { required, completedCount, completedPercentage };
+  const runtimeMilestones = Array.isArray(run?.runtime?.milestones)
+    ? Object.fromEntries(run.runtime.milestones.map((milestone) => [milestone.id, milestone]))
+    : (run?.runtime?.milestones || {});
+  const conditionResult = evaluateProjectConditions({
+    conditions: config.conditions || [{ type: "all_required" }],
+    context: {
+      required: progress.required || required,
+      completedCount: progress.completedCount ?? completedCount,
+      completedPercentage: progress.completedPercentage ?? completedPercentage,
+      targets,
+      results,
+      milestones: { ...runtimeMilestones, ...milestones },
+      manual,
+      resultFields,
+      units
+    },
+    combination: config.combination || "all"
+  });
+  const qualified = conditionResult.satisfied;
+  const deadline = run?.deadline || config.deadline || null;
+  const deadlineReached = Boolean(deadline && new Date(now) >= new Date(deadline));
+  const finishBehaviour = config.finishBehaviour || "ready";
   let status = "NOT_STARTED";
   if (finished && qualified) status = "COMPLETED";
   else if (qualified) status = finishBehaviour === "auto" ? "COMPLETED" : "READY_TO_FINISH";
   else if (deadlineReached && config.deadlinePolicy === "hard_expiry") status = "EXPIRED";
   else if (deadlineReached) status = "OVERDUE";
   else if ((progress.completedCount ?? completedCount) > 0 || (progress.completedPercentage ?? completedPercentage) > 0) status = "IN_PROGRESS";
-  return { ...conditionResult, qualified, readyToFinish: qualified && status === "READY_TO_FINISH", progress, status, deadlineReached };
+  return { ...conditionResult, qualified, readyToFinish: qualified && status === "READY_TO_FINISH", progress, children: evaluatedChildren, status, deadlineReached };
 }
 
 export function updateProjectChild({ run, relationshipId, state, logId = null, reason = null, now = new Date() } = {}) {
