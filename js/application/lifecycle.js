@@ -376,7 +376,7 @@ export function reconcileTemporalState({
           now: current,
           unfinishedPolicy: occurrence.snapshot?.unfinishedPolicy ||
             relationship?.config?.unfinishedPolicy ||
-            state.settings?.defaults?.actionListExpire ? "expire" : "carry_forward"
+            (state.settings?.defaults?.actionListExpire === false ? "carry_forward" : "expire")
         });
       if (status !== occurrence.status) {
         occurrence.status = status;
