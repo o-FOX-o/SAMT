@@ -177,9 +177,46 @@ export function mountSamtApp(engine, documentRef = globalThis.document) {
     const dialog = modal.open({ title, content }); const form = dialog.element.querySelector("form"); if (!form) return dialog; form.addEventListener("submit", (event) => { event.preventDefault(); try { onSubmit(form, dialog.close); dialog.close(); render(); } catch (error) { const target = dialog.element.querySelector("[data-form-error]"); if (target) target.textContent = error?.message || "Could not save."; else showFlash(error?.message || "Could not save.", "error"); } }); if (onChange) form.addEventListener("change", (event) => onChange(event, form, dialog.element)); return dialog;
   }
   function openLogModal(actionId = null, context = {}) {
-    const state = stateForView(); if (!(state.actions || []).length) { showFlash("Create an Action before logging progress.", "info"); router.navigate("/actions"); return; }
-    const selected = actionId || state.actions.find((action) => action.status === "active")?.id || state.actions[0].id; const action = actionById(state, selected); const local = new Date(); local.setMinutes(local.getMinutes() - local.getTimezoneOffset()); const defaultTime = local.toISOString().slice(0, 16);
-    openForm({ title: action?.direction === "avoid" ? "Log Avoid Action" : "Log Action", content: `<form class="samt-form" data-form="log-action"><p class="samt-muted">One real-world event creates one factual Action Log. Context attribution is optional.</p><label>Action<select class="samt-input" name="actionId" data-log-action>${actionOptions(state, selected)}</select></label><div data-result-fields>${resultInputs(action, state.units || [])}</div><div class="samt-form-grid"><label>Duration (minutes)<input class="samt-input" name="durationMinutes" type="number" min="0" step="any" value="0"></label><label>Quantity<input class="samt-input" name="quantity" type="number" min="0" step="any"></label><label>When<input class="samt-input" name="eventAt" type="datetime-local" value="${defaultTime}"></label></div><label>Note<textarea class="samt-input" name="note" rows="2" placeholder="Optional context"></textarea><input type="hidden" name="occurrenceId" value="${esc(context.occurrenceId || "")}"><input type="hidden" name="blockId" value="${esc(context.blockId || "")}"><p class="samt-form-error" data-form-error role="alert"></p><button class="samt-button primary" type="submit">Save factual log</button></form>`, onChange: (event, form, element) => { if (event.target.name !== "actionId") return; const next = actionById(state, event.target.value); element.querySelector("[data-result-fields]").innerHTML = resultInputs(next, state.units || []); }, onSubmit: (form) => { const data = new FormData(form); const currentAction = actionById(state, data.get("actionId")); if (!currentAction) throw new Error("Choose an Action."); const timestamp = data.get("eventAt") ? new Date(data.get("eventAt")).toISOString() : new Date().toISOString(); const refs = []; if (data.get("occurrenceId")) refs.push({ occurrenceId: data.get("occurrenceId") }); if (data.get("blockId")) refs.push({ blockId: data.get("blockId") }); engine.commands.logAction({ actionId: currentAction.id, eventAt: timestamp, durationMinutes: Number(data.get("durationMinutes") || 0), quantity: data.get("quantity") === "" ? null : Number(data.get("quantity")), resultValues: parseLogValues(form, currentAction), contextRefs: refs, note: data.get("note") || "", finalizing: true, commandId: `ui-log-${Date.now()}-${Math.random().toString(36).slice(2)}` }); flash = { message: "Action Log saved.", level: "success" }; } });
+    const state = stateForView();
+    if (!(state.actions || []).length) { showFlash("Create an Action before logging progress.", "info"); router.navigate("/actions"); return; }
+    const selected = actionId || state.actions.find((action) => action.status === "active")?.id || state.actions[0].id;
+    const action = actionById(state, selected);
+    const local = new Date(); local.setMinutes(local.getMinutes() - local.getTimezoneOffset());
+    const defaultTime = local.toISOString().slice(0, 16);
+    const hidden = "<input type=\"hidden\" name=\"occurrenceId\" value=\"" + esc(context.occurrenceId || "") + "\"><input type=\"hidden\" name=\"blockId\" value=\"" + esc(context.blockId || "") + "\"><input type=\"hidden\" name=\"runId\" value=\"" + esc(context.runId || "") + "\"><input type=\"hidden\" name=\"relationshipId\" value=\"" + esc(context.relationshipId || "") + "\">";
+    openForm({
+      title: action?.direction === "avoid" ? "Log Avoid Action" : "Log Action",
+      content: "<form class=\"samt-form\" data-form=\"log-action\"><p class=\"samt-muted\">One real-world event creates one factual Action Log. Context attribution is optional.</p><label>Action<select class=\"samt-input\" name=\"actionId\" data-log-action>" + actionOptions(state, selected) + "</select></label><div data-result-fields>" + resultInputs(action, state.units || []) + "</div><div class=\"samt-form-grid\"><label>Duration (minutes)<input class=\"samt-input\" name=\"durationMinutes\" type=\"number\" min=\"0\" step=\"any\" value=\"0\"></label><label>Quantity<input class=\"samt-input\" name=\"quantity\" type=\"number\" min=\"0\" step=\"any\"></label><label>When<input class=\"samt-input\" name=\"eventAt\" type=\"datetime-local\" value=\"" + defaultTime + "\"></label></div><label>Note<textarea class=\"samt-input\" name=\"note\" rows=\"2\" placeholder=\"Optional context\"></textarea>" + hidden + "<p class=\"samt-form-error\" data-form-error role=\"alert\"></p><button class=\"samt-button primary\" type=\"submit\">Save factual log</button></form>",
+      onChange: (event, form, element) => {
+        if (event.target.name !== "actionId") return;
+        const next = actionById(state, event.target.value);
+        element.querySelector("[data-result-fields]").innerHTML = resultInputs(next, state.units || []);
+      },
+      onSubmit: (form) => {
+        const data = new FormData(form);
+        const currentAction = actionById(state, data.get("actionId"));
+        if (!currentAction) throw new Error("Choose an Action.");
+        const timestamp = data.get("eventAt") ? new Date(data.get("eventAt")).toISOString() : new Date().toISOString();
+        const refs = [];
+        if (data.get("occurrenceId")) refs.push({ occurrenceId: data.get("occurrenceId") });
+        if (data.get("blockId") && !data.get("runId")) refs.push({ blockId: data.get("blockId") });
+        engine.commands.logAction({
+          actionId: currentAction.id,
+          eventAt: timestamp,
+          durationMinutes: Number(data.get("durationMinutes") || 0),
+          quantity: data.get("quantity") === "" ? null : Number(data.get("quantity")),
+          resultValues: parseLogValues(form, currentAction),
+          contextRefs: refs,
+          occurrenceId: data.get("occurrenceId") || null,
+          runId: data.get("runId") || null,
+          relationshipId: data.get("relationshipId") || null,
+          note: data.get("note") || "",
+          finalizing: true,
+          commandId: "ui-log-" + Date.now() + "-" + Math.random().toString(36).slice(2)
+        });
+        flash = { message: "Action Log saved.", level: "success" };
+      }
+    });
   }
   function openNewAction() {
     const state = stateForView(); openForm({ title: "New Action", content: `<form class="samt-form" data-form="new-action"><div class="samt-form-grid"><label>Name<input class="samt-input" name="name" required autofocus></label><label>Direction<select class="samt-input" name="direction"><option value="do">Do</option><option value="avoid">Avoid</option></select></label><label>Completion<select class="samt-input" name="completionMethod"><option value="time">Time minimum</option><option value="quantity">Quantity target</option></select></label><label>Minimum / target<input class="samt-input" name="completionValue" type="number" min="0" step="any" value="0"></label></div><label>Description<textarea class="samt-input" name="description" rows="3"></textarea></label><label>Tags<select class="samt-input" name="tagId" multiple size="4">${(state.tags || []).filter((tag) => tag.status !== "archived").map((tag) => `<option value="${esc(tag.id)}">${esc(tag.name)}</option>`).join("")}</select></label><p class="samt-muted">Add Result Fields after creating the Action. Up to 10 fields are supported.</p><p class="samt-form-error" data-form-error role="alert"></p><button class="samt-button primary" type="submit">Create Action</button></form>`, onSubmit: (form) => { const data = new FormData(form); const action = engine.commands.createAction({ name: data.get("name"), direction: data.get("direction"), description: data.get("description"), tagIds: data.getAll("tagId"), completion: data.get("completionMethod") === "quantity" ? { method: "quantity", target: Number(data.get("completionValue")) } : { method: "time", minimumMinutes: Number(data.get("completionValue")) } }); modal.close(); router.navigate(`/actions/${encodeURIComponent(action.id)}`); flash = { message: "Action created.", level: "success" }; } });
