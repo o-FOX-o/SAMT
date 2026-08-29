@@ -1,6 +1,6 @@
 import { ConflictError, NotFoundError, ValidationError } from "../shared/errors.js";
 import { clone, normalizedKey } from "../shared/validation.js";
-import { createAction, validateAction, versionResultFields } from "../domain/actions.js";
+import { createAction, validateAction, versionResultFields, isActionCompletionAchieved } from "../domain/actions.js";
 import { createCategory, createTag, validateTaxonomy } from "../domain/taxonomy.js";
 import { createUnit, validateUnits } from "../domain/units.js";
 import { createResultField, validateResultFields } from "../domain/results.js";
@@ -9,10 +9,13 @@ import { createBlock, setDefinitionStatus, isRunCapableBlockType } from "../doma
 import { createRelationship, validateBlockGraph } from "../domain/relationships.js";
 import { createOccurrence } from "../domain/occurrences.js";
 import { resolveOccurrenceStatus } from "../domain/occurrences.js";
-import { createRun, startRun as startDomainRun, finishRun as finishDomainRun, pauseRun as pauseDomainRun, resumeRun as resumeDomainRun, cancelRun as cancelDomainRun } from "../domain/runs.js";
-import { returnToWorkflowStep as returnToDomainWorkflowStep } from "../domain/workflows.js";
-import { createActivation, pauseActivation as pauseDomainActivation, resumeActivation as resumeDomainActivation } from "../domain/activations.js";
-import { advanceCyclePosition, createBigCycleRuntime, generateNextSmallCycle } from "../domain/cycles.js";
+import { createRun, startRun as startDomainRun, finishRun as finishDomainRun, pauseRun as pauseDomainRun, resumeRun as resumeDomainRun, cancelRun as cancelDomainRun, appendRunTransition } from "../domain/runs.js";
+import { returnToWorkflowStep as returnToDomainWorkflowStep, transitionWorkflowStep } from "../domain/workflows.js";
+import { initializeRoutineRuntime, updateRoutineChild, evaluateRoutineRun } from "../domain/routines.js";
+import { initializeProjectRuntime, updateProjectChild, evaluateProjectRun, createMilestone, updateMilestone, applyProjectScopeChange as applyDomainProjectScopeChange } from "../domain/projects.js";
+import { evaluateWorkflowRun, initializeWorkflowRuntime } from "../domain/workflows.js";
+import { createActivation, pauseActivation as pauseDomainActivation, resumeActivation as resumeDomainActivation, recordActivationRun } from "../domain/activations.js";
+import { advanceCyclePosition, createBigCycleRuntime, generateNextSmallCycle, currentGeneratedCycleSlot, advanceGeneratedCycleSlot, resolveCycleSlot as resolveDomainCycleSlot, recordCycleResolution } from "../domain/cycles.js";
 import { appendHistory } from "../domain/history.js";
 import { domainEvent, EVENT_TYPES } from "./events.js";
 import { importPackage } from "../import-export/importer.js";
@@ -94,6 +97,152 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
       packageName: value?.packageName || summary.packageName || value?.packageId || "SAMT package", counts: packageCounts(value), success: true, restorePointCreated: true
     }].slice(-100);
   }
+
+  function runSnapshot(block, inputSnapshot = null) {
+    const snapshot = clone(inputSnapshot || {});
+    snapshot.block = snapshot.block || clone(block);
+    snapshot.relationships = snapshot.relationships || clone(block.relationships || []);
+    snapshot.config = snapshot.config || clone(block.config || {});
+    return snapshot;
+  }
+
+  function initializeRuntimeForBlock(block, snapshot, stamp) {
+    const source = { ...clone(block), ...(clone(snapshot.block) || {}), relationships: clone(snapshot.relationships || block.relationships || []) };
+    if (block.type === "routine") return initializeRoutineRuntime({ routine: source, now: stamp });
+    if (block.type === "workflow") return initializeWorkflowRuntime({ workflow: source, now: stamp });
+    if (block.type === "project") return initializeProjectRuntime({ project: source, now: stamp });
+    if (block.type === "cycle") return { type: "cycle", currentSmallCycleId: null, currentSlot: -1, smallCycleNumber: 0, appearanceCoverage: [], completionCoverage: [], startedAt: new Date(stamp).toISOString() };
+    return null;
+  }
+
+  function createStartedRun(state, block, input = {}) {
+    const stamp = now();
+    const snapshot = runSnapshot(block, input.snapshot);
+    const runtime = input.runtime || initializeRuntimeForBlock(block, snapshot, stamp);
+    const run = createRun({
+      ...input,
+      id: input.id || makeId("run"),
+      blockId: block.id,
+      activationId: input.activationId || null,
+      label: input.label || block.name,
+      snapshot,
+      runtime,
+      children: input.children || runtime?.children || [],
+      steps: input.steps || runtime?.steps || null,
+      currentStepId: input.currentStepId || runtime?.currentStepId || null,
+      plannedStart: input.plannedStart || input.scheduledAt || null,
+      deadline: input.deadline ?? block.config?.deadline ?? null,
+      activationSnapshot: input.activationSnapshot || null,
+      now: stamp
+    });
+    return startDomainRun(run, stamp);
+  }
+
+  function evaluateRun(run, block, finished = false) {
+    const source = run.snapshot?.block || block;
+    if (block.type === "routine") return evaluateRoutineRun({ run, routine: source, now: now(), finished });
+    if (block.type === "workflow") return evaluateWorkflowRun({ run, workflow: source, now: now(), finished });
+    if (block.type === "project") return evaluateProjectRun({ project: source, run, now: now(), finished });
+    return { status: run.status, qualified: true, satisfied: true };
+  }
+
+  function applyRunEvaluation(run, evaluation, { finished = false } = {}) {
+    const stamp = now();
+    let next = { ...run, updatedAt: stamp.toISOString() };
+    if (evaluation.children) {
+      next.children = clone(evaluation.children);
+      next.runtime = { ...(next.runtime || {}), type: next.runtime?.type || "routine", children: clone(evaluation.children), progress: clone(evaluation.progress), evaluation: clone(evaluation), updatedAt: stamp.toISOString() };
+    }
+    if (evaluation.steps) {
+      next.steps = clone(evaluation.steps);
+      next.currentStepId = evaluation.currentStepId || null;
+      next.runtime = { ...(next.runtime || {}), type: next.runtime?.type || "workflow", steps: clone(evaluation.steps), currentStepId: next.currentStepId, evaluation: clone(evaluation), updatedAt: stamp.toISOString() };
+    }
+    if (evaluation.results) next.runtime = { ...(next.runtime || {}), conditions: clone(evaluation.results), evaluation: clone(evaluation), updatedAt: stamp.toISOString() };
+    if (evaluation.progress) next.runtime = { ...(next.runtime || {}), progress: clone(evaluation.progress), evaluation: clone(evaluation), updatedAt: stamp.toISOString() };
+    if (finished) {
+      const qualified = evaluation.qualified ?? evaluation.satisfied ?? true;
+      if (!qualified) throw new ValidationError("Run requirements are not satisfied.");
+      return finishDomainRun(next, "COMPLETED", stamp);
+    }
+    if (evaluation.status && !["NOT_STARTED", "PAUSED"].includes(run.status)) {
+      if (["COMPLETED", "PARTIAL", "MISSED"].includes(evaluation.status)) return finishDomainRun(next, evaluation.status, stamp);
+      next.status = evaluation.status;
+    }
+    return next;
+  }
+
+  function runRelationships(run, block) {
+    return run.snapshot?.relationships || run.snapshot?.block?.relationships || block.relationships || [];
+  }
+
+  function actionChildForRun(run, block, actionId, relationshipId = null) {
+    const relationships = runRelationships(run, block);
+    if (relationshipId) return relationships.find((relationship) => relationship.id === relationshipId && relationship.kind === "action" && relationship.refId === actionId) || null;
+    const matches = relationships.filter((relationship) => relationship.kind === "action" && relationship.refId === actionId);
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function aggregatedRunLog(state, run, relationshipId, action) {
+    const logs = (state.actionLogs || []).filter((log) => log.contextRefs?.some((reference) =>
+      reference.runId === run.id && (!relationshipId || reference.relationshipId === relationshipId)
+    ));
+    return {
+      quantity: logs.reduce((sum, log) => sum + Number(log.quantity || 0), 0),
+      durationMinutes: logs.reduce((sum, log) => sum + Number(log.durationMinutes || 0), 0),
+      logs
+    };
+  }
+
+  function updateRunAfterActionLog(state, run, block, action, input, log) {
+    const relationship = actionChildForRun(run, block, action.id, input.relationshipId);
+    if (!relationship) return;
+    const aggregate = aggregatedRunLog(state, run, relationship.id, action);
+    let next = run;
+    if (block.type === "routine" || block.type === "project") {
+      if (isActionCompletionAchieved({ action, log: aggregate })) {
+        next = block.type === "routine"
+          ? updateRoutineChild({ run, relationshipId: relationship.id, state: "COMPLETED", logId: log.id, now: now() })
+          : updateProjectChild({ run, relationshipId: relationship.id, state: "COMPLETED", logId: log.id, now: now() });
+      } else {
+        const children = (run.children || []).map((child) => child.relationshipId === relationship.id ? { ...child, logIds: [...new Set([...(child.logIds || []), ...aggregate.logs.map((item) => item.id)])], state: child.state === "AVAILABLE" ? "IN_PROGRESS" : child.state, updatedAt: now().toISOString() } : child);
+        next = { ...run, children, runtime: { ...(run.runtime || {}), children: clone(children) }, updatedAt: now().toISOString() };
+      }
+    } else if (block.type === "workflow" && input.completeStep === true) {
+      next = transitionWorkflowStep({ run, stepId: relationship.id, state: "COMPLETED", reason: null, now: now() });
+    }
+    const evaluation = evaluateRun(next, block, false);
+    return applyRunEvaluation(next, evaluation, { finished: false });
+  }
+
+  function ensureCycleRuntime(state, cycle) {
+    let bigIndex = (state.cycleBigCycles || []).findIndex((item) => item.cycleId === cycle.id && item.status === "open");
+    if (bigIndex < 0) {
+      const big = createBigCycleRuntime({
+        cycleId: cycle.id,
+        relationships: cycle.relationships || [],
+        smallCycleSize: cycle.config?.smallCycleSize || null,
+        fairness: cycle.config?.fairness || {},
+        generationMode: cycle.config?.generationMode,
+        config: cycle.config,
+        now: now()
+      });
+      state.cycleBigCycles.push(big);
+      bigIndex = state.cycleBigCycles.length - 1;
+    }
+    const big = state.cycleBigCycles[bigIndex];
+    let small = (state.cycleSmallCycles || []).find((item) => item.id === big.currentSmallCycleId);
+    if (!small || Number(big.currentSlot) >= Number(small.size || small.slots?.length || 0)) {
+      small = generateNextSmallCycle({ bigCycle: big, relationships: cycle.relationships || [], now: now() });
+      state.cycleSmallCycles.push(small);
+      big.smallCycles = [...(big.smallCycles || []), clone(small)];
+      big.currentSmallCycleId = small.id;
+      big.currentSlot = -1;
+      big.fairness = clone(small.fairness);
+    }
+    return { big, bigIndex, small };
+  }
+
 
   return {
     createCategory(input = {}) {
@@ -196,40 +345,273 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
     },
     updateRelationship(parentBlockId, relationshipId, patch = {}) {
       return repository.transaction(() => {
-        const state = repository.getState(); const { index, item: parent } = requireStateItem(state.blocks, parentBlockId, "Block"); const before = (parent.relationships || []).find((relationship) => relationship.id === relationshipId); if (!before) throw new NotFoundError(`Relationship not found: ${relationshipId}`); const nextRelationship = { ...before, ...clone(patch), id: relationshipId, parentBlockId, updatedAt: now().toISOString() }; const next = { ...parent, relationships: parent.relationships.map((relationship) => relationship.id === relationshipId ? nextRelationship : relationship), updatedAt: now().toISOString() }; validateBlockGraph({ blocks: state.blocks.map((block, current) => current === index ? next : block), actions: state.actions }); replaceAt(state.blocks, index, next); touch(); addHistory({ type: "definition", description: `Updated relationship in ${parent.name}`, objectType: "relationship", objectId: relationshipId, snapshots: { before: clone(before), after: clone(nextRelationship) } }); return clone(nextRelationship);
+        const state = repository.getState();
+        const { index, item: parent } = requireStateItem(state.blocks, parentBlockId, "Block");
+        const before = (parent.relationships || []).find((relationship) => relationship.id === relationshipId);
+        if (!before) throw new NotFoundError(`Relationship not found: ${relationshipId}`);
+        const nextRelationship = {
+          ...before,
+          ...clone(patch),
+          id: relationshipId,
+          parentBlockId,
+          kind: before.kind,
+          refId: before.refId,
+          config: { ...(before.config || {}), ...(clone(patch.config) || {}) },
+          updatedAt: now().toISOString()
+        };
+        const next = {
+          ...parent,
+          relationships: parent.relationships.map((relationship) => relationship.id === relationshipId ? nextRelationship : relationship),
+          updatedAt: now().toISOString()
+        };
+        validateBlockGraph({ blocks: state.blocks.map((block, current) => current === index ? next : block), actions: state.actions });
+        replaceAt(state.blocks, index, next);
+        touch();
+        addHistory({ type: "definition", description: `Updated relationship in ${parent.name}`, objectType: "relationship", objectId: relationshipId, snapshots: { before: clone(before), after: clone(nextRelationship) } });
+        return clone(nextRelationship);
       });
     },
     removeRelationship(parentBlockId, relationshipId) { return repository.transaction(() => { const state = repository.getState(); const { index, item: parent } = requireStateItem(state.blocks, parentBlockId, "Block"); const removed = (parent.relationships || []).find((relationship) => relationship.id === relationshipId); if (!removed) throw new NotFoundError(`Relationship not found: ${relationshipId}`); replaceAt(state.blocks, index, { ...parent, relationships: parent.relationships.filter((relationship) => relationship.id !== relationshipId), updatedAt: now().toISOString() }); touch(); addHistory({ type: "definition", description: `Removed relationship from ${parent.name}`, objectType: "relationship", objectId: relationshipId, snapshots: { removed: clone(removed) } }); return clone(removed); }); },
     logAction(input = {}) {
       return repository.transaction(() => {
-        if (commandWasApplied(input.commandId)) return clone(repository.getState().actionLogs.find((log) => log.commandId === input.commandId)); const state = repository.getState(); const action = state.actions.find((candidate) => candidate.id === input.actionId); if (!action) throw new NotFoundError(`Action not found: ${input.actionId}`); const log = createActionLog({ ...input, action, finalizing: Boolean(input.finalizing), now: now(), units: state.units }); if (state.actionLogs.some((candidate) => candidate.id === log.id)) throw new ConflictError(`Action Log ID already exists: ${log.id}`); for (const reference of log.contextRefs || []) { if (!reference.occurrenceId) continue; const occurrence = state.occurrences.find((item) => item.id === reference.occurrenceId); if (!occurrence) throw new NotFoundError(`Occurrence not found: ${reference.occurrenceId}`); const relationship = state.blocks.flatMap((block) => block.relationships || []).find((candidate) => candidate.id === occurrence.relationshipId); if (relationship?.kind === "action" && relationship.refId !== action.id) throw new ValidationError("Action Log cannot be attributed to an Occurrence for a different Action."); } if (input.commandId) log.commandId = input.commandId; state.actionLogs.push(log); for (const reference of log.contextRefs || []) { const occurrence = state.occurrences.find((item) => item.id === reference.occurrenceId); if (!occurrence) continue; if (!occurrence.logIds.includes(log.id)) occurrence.logIds.push(log.id); const beforeStatus = occurrence.status; const nextStatus = resolveOccurrenceStatus({ occurrence, logs: state.actionLogs, action, now: now(), unfinishedPolicy: occurrence.snapshot?.unfinishedPolicy || "expire" }); if (nextStatus !== beforeStatus) { occurrence.status = nextStatus; occurrence.updatedAt = now().toISOString(); emit(nextStatus === "completed" ? EVENT_TYPES.OCCURRENCE_COMPLETED : EVENT_TYPES.OCCURRENCE_STATUS_CHANGED, { occurrenceId: occurrence.id, status: nextStatus }); } } touch(); addHistory({ type: "action_log", description: `Logged ${action.name}`, objectType: "actionLog", objectId: log.id, actionId: action.id, snapshots: { action: log.actionSnapshot, results: log.resultValues.map((entry) => entry.snapshot) } }); emit(EVENT_TYPES.ACTION_LOGGED, { actionLogId: log.id, actionId: action.id }); return clone(log);
+        if (commandWasApplied(input.commandId)) return clone(repository.getState().actionLogs.find((log) => log.commandId === input.commandId));
+        const state = repository.getState();
+        const action = state.actions.find((candidate) => candidate.id === input.actionId);
+        if (!action) throw new NotFoundError(`Action not found: ${input.actionId}`);
+        let run = input.runId ? state.runs.find((candidate) => candidate.id === input.runId) : null;
+        if (input.runId && !run) throw new NotFoundError(`Run not found: ${input.runId}`);
+        const contextRefs = clone(input.contextRefs || []);
+        if (run) {
+          const context = { blockId: run.blockId, runId: run.id, relationshipId: input.relationshipId || null, occurrenceId: input.occurrenceId || null };
+          const key = `${context.blockId || ""}:${context.runId || ""}:${context.occurrenceId || ""}`;
+          if (!contextRefs.some((reference) => `${reference.blockId || ""}:${reference.runId || ""}:${reference.occurrenceId || ""}` === key)) contextRefs.push(context);
+        }
+        const log = createActionLog({ ...input, contextRefs, action, finalizing: Boolean(input.finalizing), now: now(), units: state.units });
+        if (state.actionLogs.some((candidate) => candidate.id === log.id)) throw new ConflictError(`Action Log ID already exists: ${log.id}`);
+        for (const reference of log.contextRefs || []) {
+          if (!reference.occurrenceId) continue;
+          const occurrence = state.occurrences.find((item) => item.id === reference.occurrenceId);
+          if (!occurrence) throw new NotFoundError(`Occurrence not found: ${reference.occurrenceId}`);
+          const relationship = state.blocks.flatMap((block) => block.relationships || []).find((candidate) => candidate.id === occurrence.relationshipId);
+          if (relationship?.kind === "action" && relationship.refId !== action.id) throw new ValidationError("Action Log cannot be attributed to an Occurrence for a different Action.");
+        }
+        if (input.commandId) log.commandId = input.commandId;
+        state.actionLogs.push(log);
+        for (const reference of log.contextRefs || []) {
+          const occurrence = state.occurrences.find((item) => item.id === reference.occurrenceId);
+          if (!occurrence) continue;
+          if (!occurrence.logIds.includes(log.id)) occurrence.logIds.push(log.id);
+          const beforeStatus = occurrence.status;
+          const nextStatus = resolveOccurrenceStatus({ occurrence, logs: state.actionLogs, action, now: now(), unfinishedPolicy: occurrence.snapshot?.unfinishedPolicy || "expire" });
+          if (nextStatus !== beforeStatus) {
+            occurrence.status = nextStatus;
+            occurrence.updatedAt = now().toISOString();
+            emit(nextStatus === "completed" ? EVENT_TYPES.OCCURRENCE_COMPLETED : EVENT_TYPES.OCCURRENCE_STATUS_CHANGED, { occurrenceId: occurrence.id, status: nextStatus });
+          }
+        }
+        if (run) {
+          const block = state.blocks.find((candidate) => candidate.id === run.blockId);
+          if (block) {
+            const runIndex = state.runs.findIndex((candidate) => candidate.id === run.id);
+            if (runIndex >= 0) state.runs[runIndex] = updateRunAfterActionLog(state, run, block, action, input, log);
+          }
+        }
+        touch();
+        addHistory({ type: "action_log", description: `Logged ${action.name}`, objectType: "actionLog", objectId: log.id, actionId: action.id, snapshots: { action: log.actionSnapshot, results: log.resultValues.map((entry) => entry.snapshot) } });
+        emit(EVENT_TYPES.ACTION_LOGGED, { actionLogId: log.id, actionId: action.id, runId: input.runId || null });
+        return clone(log);
       });
     },
     deleteActionLog(id) { return repository.transaction(() => { const state = repository.getState(); const { index, item: removed } = requireStateItem(state.actionLogs, id, "Action Log"); state.actionLogs.splice(index, 1); for (const occurrence of state.occurrences || []) occurrence.logIds = (occurrence.logIds || []).filter((logId) => logId !== id); touch(); addHistory({ type: "action_log", description: `Deleted Action Log: ${removed.actionSnapshot?.name || removed.actionId}`, objectType: "actionLog", objectId: id, metadata: { factualSnapshotPreserved: true }, snapshots: { deleted: removed } }); emit(EVENT_TYPES.ACTION_LOG_DELETED, { actionLogId: id }); return clone(removed); }); },
-    createActivation(input = {}) { return repository.transaction(() => { const state = repository.getState(); if (!state.blocks.some((block) => block.id === input.blockId)) throw new NotFoundError(`Block not found: ${input.blockId}`); const activation = createActivation({ ...input, id: input.id || makeId("activation"), now: now() }); state.activations.push(activation); touch(); addHistory({ type: "activation", description: "Created activation", objectType: "activation", objectId: activation.id }); emit(EVENT_TYPES.BLOCK_ACTIVATED, { activationId: activation.id, blockId: activation.blockId }); return clone(activation); }); },
+    createActivation(input = {}) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const block = state.blocks.find((candidate) => candidate.id === input.blockId);
+        if (!block) throw new NotFoundError(`Block not found: ${input.blockId}`);
+        if (!input.allowMultiple && state.activations.some((activation) => activation.blockId === block.id && activation.status === "active")) {
+          throw new ConflictError("An active Activation already exists for this Block.");
+        }
+        const activation = createActivation({ ...input, id: input.id || makeId("activation"), now: now() });
+        state.activations.push(activation);
+        if (activation.mode === "run_now" && isRunCapableBlockType(block.type)) {
+          const run = createStartedRun(state, block, { activationId: activation.id, label: activation.label || block.name, scheduledAt: now().toISOString(), activationSnapshot: activation });
+          state.runs.push(run);
+          state.activations[state.activations.length - 1] = recordActivationRun(activation, now());
+        }
+        touch();
+        addHistory({ type: "activation", description: `Created activation for ${block.name}`, objectType: "activation", objectId: activation.id });
+        emit(EVENT_TYPES.BLOCK_ACTIVATED, { activationId: activation.id, blockId: activation.blockId });
+        return clone(state.activations[state.activations.length - 1]);
+      });
+    },
     pauseActivation(id, options = {}) { return repository.transaction(() => { const state = repository.getState(); const { index } = requireStateItem(state.activations, id, "Activation"); state.activations[index] = pauseDomainActivation(state.activations[index], { ...options, now: now() }); touch(); addHistory({ type: "activation", description: "Paused activation", objectType: "activation", objectId: id }); emit(EVENT_TYPES.BLOCK_PAUSED, { activationId: id }); return clone(state.activations[index]); }); },
     resumeActivation(id) { return repository.transaction(() => { const state = repository.getState(); const { index } = requireStateItem(state.activations, id, "Activation"); state.activations[index] = resumeDomainActivation(state.activations[index], now()); touch(); addHistory({ type: "activation", description: "Resumed activation", objectType: "activation", objectId: id }); emit(EVENT_TYPES.BLOCK_ACTIVATED, { activationId: id, blockId: state.activations[index].blockId }); return clone(state.activations[index]); }); },
-    startRun(input = {}) { return repository.transaction(() => { const state = repository.getState(); const block = state.blocks.find((candidate) => candidate.id === input.blockId); if (!block) throw new NotFoundError(`Block not found: ${input.blockId}`); if (!isRunCapableBlockType(block.type)) throw new ValidationError(`${block.type} Blocks do not create Runs.`); const run = startDomainRun(createRun({ ...input, id: input.id || makeId("run"), now: now(), snapshot: input.snapshot || { block: clone(block) } }), now()); state.runs.push(run); touch(); addHistory({ type: "run", description: `Started ${block.name}`, objectType: "run", objectId: run.id, snapshots: { run: run.snapshot } }); emit(EVENT_TYPES.RUN_STARTED, { runId: run.id, blockId: block.id }); return clone(run); }); },
-    finishRun(id, status = "COMPLETED") { return repository.transaction(() => { const state = repository.getState(); const { index } = requireStateItem(state.runs, id, "Run"); state.runs[index] = finishDomainRun(state.runs[index], status, now()); touch(); addHistory({ type: "run", description: `Finished Run (${status})`, objectType: "run", objectId: id }); emit(EVENT_TYPES.RUN_FINISHED, { runId: id, status }); return clone(state.runs[index]); }); },
+    startRun(input = {}) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const block = state.blocks.find((candidate) => candidate.id === input.blockId);
+        if (!block) throw new NotFoundError(`Block not found: ${input.blockId}`);
+        if (!isRunCapableBlockType(block.type)) throw new ValidationError(`${block.type} Blocks do not create Runs.`);
+        if (["ARCHIVED", "PAUSED"].includes(block.definitionStatus)) throw new ValidationError("This Block is not active.");
+        const run = createStartedRun(state, block, input);
+        state.runs.push(run);
+        touch();
+        addHistory({ type: "run", description: `Started ${block.name}`, objectType: "run", objectId: run.id, snapshots: { run: run.snapshot } });
+        emit(EVENT_TYPES.RUN_STARTED, { runId: run.id, blockId: block.id });
+        return clone(run);
+      });
+    },
+    finishRun(id, status = "COMPLETED") {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index, item: run } = requireStateItem(state.runs, id, "Run");
+        if (status === "COMPLETED") {
+          const block = state.blocks.find((candidate) => candidate.id === run.blockId);
+          const evaluated = block ? evaluateRun(run, block, true) : { qualified: true, satisfied: true, status: run.status };
+          state.runs[index] = block ? applyRunEvaluation(run, evaluated, { finished: true }) : finishDomainRun(run, status, now());
+        } else {
+          state.runs[index] = finishDomainRun(run, status, now());
+        }
+        touch();
+        addHistory({ type: "run", description: `Finished Run (${status})`, objectType: "run", objectId: id });
+        emit(EVENT_TYPES.RUN_FINISHED, { runId: id, status: state.runs[index].status });
+        return clone(state.runs[index]);
+      });
+    },
     pauseRun(id) { return repository.transaction(() => { const state = repository.getState(); const { index } = requireStateItem(state.runs, id, "Run"); state.runs[index] = pauseDomainRun(state.runs[index], now()); touch(); addHistory({ type: "run", description: "Paused Run", objectType: "run", objectId: id }); emit(EVENT_TYPES.RUN_PAUSED, { runId: id }); return clone(state.runs[index]); }); },
     resumeRun(id) { return repository.transaction(() => { const state = repository.getState(); const { index } = requireStateItem(state.runs, id, "Run"); state.runs[index] = resumeDomainRun(state.runs[index], now()); touch(); addHistory({ type: "run", description: "Resumed Run", objectType: "run", objectId: id }); emit(EVENT_TYPES.RUN_RESUMED, { runId: id }); return clone(state.runs[index]); }); },
     returnToWorkflowStep(runId, stepId) {
       return repository.transaction(() => {
-        const state = repository.getState(); const { index, item: run } = requireStateItem(state.runs, runId, "Run");
+        const state = repository.getState();
+        const { index, item: run } = requireStateItem(state.runs, runId, "Run");
         const steps = Array.isArray(run.steps) ? run.steps : Array.isArray(run.snapshot?.steps) ? run.snapshot.steps : null;
         if (!steps) throw new ValidationError("This Workflow Run has no runtime steps.");
-        const nextSteps = returnToDomainWorkflowStep({ steps, stepId, now: now() });
-        state.runs[index] = { ...run, steps: nextSteps, currentStepId: stepId, updatedAt: now().toISOString() };
-        touch(); addHistory({ type: "workflow", description: `Returned Workflow Run to step ${stepId}`, objectType: "run", objectId: runId, metadata: { stepId, downstreamReopened: true } }); emit(EVENT_TYPES.DEFINITION_CHANGED, { runId, workflowStepId: stepId, transition: "RETURN_TO_STEP" }); return clone(state.runs[index]);
+        const reopened = returnToDomainWorkflowStep({ steps, stepId, now: now() });
+        const transitioned = appendRunTransition({ ...run, steps: reopened, currentStepId: stepId }, { type: "RETURN_TO_STEP", stepId, downstreamReopened: true }, now());
+        state.runs[index] = { ...transitioned, runtime: { ...(transitioned.runtime || {}), type: "workflow", steps: clone(reopened), currentStepId: stepId } };
+        touch();
+        addHistory({ type: "workflow", description: `Returned Workflow Run to step ${stepId}`, objectType: "run", objectId: runId, metadata: { stepId, downstreamReopened: true } });
+        emit(EVENT_TYPES.DEFINITION_CHANGED, { runId, workflowStepId: stepId, transition: "RETURN_TO_STEP" });
+        return clone(state.runs[index]);
       });
     },
-    cancelRun(id) { return repository.transaction(() => { const state = repository.getState(); const { index } = requireStateItem(state.runs, id, "Run"); state.runs[index] = cancelDomainRun(state.runs[index], now()); touch(); addHistory({ type: "run", description: "Cancelled Run", objectType: "run", objectId: id }); emit(EVENT_TYPES.RUN_FINISHED, { runId: id, status: "CANCELLED" }); return clone(state.runs[index]); }); },
+    updateWorkflowStep(runId, stepId, stateName, reason = null) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index, item: run } = requireStateItem(state.runs, runId, "Run");
+        const block = state.blocks.find((candidate) => candidate.id === run.blockId);
+        if (!block || block.type !== "workflow") throw new ValidationError("Run is not a Workflow Run.");
+        const next = transitionWorkflowStep({ run, stepId, state: stateName, reason, now: now() });
+        const evaluated = evaluateRun(next, block, false);
+        state.runs[index] = applyRunEvaluation(next, evaluated);
+        touch();
+        addHistory({ type: "workflow", description: `Workflow step ${stateName}`, objectType: "run", objectId: runId, metadata: { stepId, state: stateName, reason } });
+        return clone(state.runs[index]);
+      });
+    },
+    startWorkflowStep(runId, stepId) { return this.updateWorkflowStep(runId, stepId, "IN_PROGRESS"); },
+    completeWorkflowStep(runId, stepId) { return this.updateWorkflowStep(runId, stepId, "COMPLETED"); },
+    skipWorkflowStep(runId, stepId, reason = "") { return this.updateWorkflowStep(runId, stepId, "SKIPPED", reason); },
+    excuseWorkflowStep(runId, stepId, reason = "") { return this.updateWorkflowStep(runId, stepId, "EXCUSED", reason); },
+    markWorkflowStepNotApplicable(runId, stepId, reason = "") { return this.updateWorkflowStep(runId, stepId, "NOT_APPLICABLE", reason); },
+    blockWorkflowStep(runId, stepId, reason = "") { return this.updateWorkflowStep(runId, stepId, "BLOCKED", reason); },
+    unblockWorkflowStep(runId, stepId) { return this.updateWorkflowStep(runId, stepId, "AVAILABLE"); },
+    cancelRun(id) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index } = requireStateItem(state.runs, id, "Run");
+        state.runs[index] = cancelDomainRun(state.runs[index], now());
+        touch();
+        addHistory({ type: "run", description: "Cancelled Run", objectType: "run", objectId: id });
+        emit(EVENT_TYPES.RUN_FINISHED, { runId: id, status: "CANCELLED" });
+        return clone(state.runs[index]);
+      });
+    },
+    updateProjectChild(runId, relationshipId, stateName, reason = null) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index, item: run } = requireStateItem(state.runs, runId, "Run");
+        const block = state.blocks.find((candidate) => candidate.id === run.blockId);
+        if (!block || block.type !== "project") throw new ValidationError("Run is not a Project Run.");
+        const next = updateProjectChild({ run, relationshipId, state: stateName, reason, now: now() });
+        state.runs[index] = applyRunEvaluation(next, evaluateRun(next, block, false));
+        touch();
+        addHistory({ type: "project", description: `Project child ${stateName}`, objectType: "run", objectId: runId, metadata: { relationshipId, state: stateName, reason } });
+        return clone(state.runs[index]);
+      });
+    },
+    addProjectMilestone(runId, input = {}) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index, item: run } = requireStateItem(state.runs, runId, "Run");
+        const block = state.blocks.find((candidate) => candidate.id === run.blockId);
+        if (!block || block.type !== "project") throw new ValidationError("Run is not a Project Run.");
+        const milestone = createMilestone({ ...input, id: input.id || makeId("milestone"), now: now() });
+        const milestones = [...(run.runtime?.milestones || []), milestone];
+        state.runs[index] = { ...run, runtime: { ...(run.runtime || {}), milestones, updatedAt: now().toISOString() }, updatedAt: now().toISOString() };
+        touch();
+        addHistory({ type: "project", description: `Added milestone: ${milestone.name}`, objectType: "milestone", objectId: milestone.id, metadata: { runId } });
+        return clone(milestone);
+      });
+    },
+    updateProjectMilestone(runId, milestoneId, patch = {}) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index, item: run } = requireStateItem(state.runs, runId, "Run");
+        state.runs[index] = updateMilestone({ run, milestoneId, patch, now: now() });
+        touch();
+        return clone(state.runs[index].runtime.milestones.find((milestone) => milestone.id === milestoneId));
+      });
+    },
+    completeProjectMilestone(runId, milestoneId) { return this.updateProjectMilestone(runId, milestoneId, { status: "completed" }); },
+    cancelProjectMilestone(runId, milestoneId) { return this.updateProjectMilestone(runId, milestoneId, { status: "cancelled" }); },
+    applyProjectScopeChange(runId, changes = []) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index, item: run } = requireStateItem(state.runs, runId, "Run");
+        const block = state.blocks.find((candidate) => candidate.id === run.blockId);
+        if (!block || block.type !== "project") throw new ValidationError("Run is not a Project Run.");
+        const next = applyDomainProjectScopeChange({ run, project: block, changes, now: now() });
+        state.runs[index] = next;
+        state.scopeChangeEvents = [...(state.scopeChangeEvents || []), { id: makeId("scope_change"), blockId: block.id, runId, changedAt: now().toISOString(), changes: clone(changes) }];
+        touch();
+        addHistory({ type: "project", description: "Applied Project scope change to active Run", objectType: "run", objectId: runId, metadata: { changes: clone(changes) } });
+        return clone(next);
+      });
+    },
     createOccurrence(input = {}) { return repository.transaction(() => { const state = repository.getState(); const occurrence = createOccurrence({ ...input, id: input.id || makeId("occurrence"), now: now() }); const duplicate = state.occurrences.find((item) => item.id === occurrence.id || occurrence.scheduledAt != null && item.relationshipId === occurrence.relationshipId && item.scheduledAt === occurrence.scheduledAt); if (duplicate) return clone(duplicate); state.occurrences.push(occurrence); touch(); emit(EVENT_TYPES.OCCURRENCE_CREATED, { occurrenceId: occurrence.id }); return clone(occurrence); }); },
     completeOccurrence(id) { return this.resolveOccurrence(id, "completed"); },
     skipOccurrence(id, reason = "") { return this.resolveOccurrence(id, "skipped", reason); },
     resolveOccurrence(id, status, reason = "") { return repository.transaction(() => { const state = repository.getState(); const { index } = requireStateItem(state.occurrences, id, "Occurrence"); const occurrence = state.occurrences[index]; if (!TERMINAL_OCCURRENCES.includes(status)) throw new ValidationError("Occurrence status is invalid."); const relationship = state.blocks.flatMap((block) => block.relationships || []).find((candidate) => candidate.id === occurrence.relationshipId); if (status === "skipped" && relationship?.config?.allowSkip !== true) throw new ValidationError("Skipping this occurrence is not allowed for this relationship."); if (status === "skipped" && relationship?.config?.requireSkipReason && !String(reason || "").trim()) throw new ValidationError("A skip reason is required."); state.occurrences[index] = { ...occurrence, status, reason: reason || null, updatedAt: now().toISOString() }; touch(); addHistory({ type: "occurrence", description: `${status} occurrence`, objectType: "occurrence", objectId: id, metadata: { reason } }); emit(status === "completed" ? EVENT_TYPES.OCCURRENCE_COMPLETED : status === "missed" ? EVENT_TYPES.OCCURRENCE_MISSED : EVENT_TYPES.OCCURRENCE_STATUS_CHANGED, { occurrenceId: id, status }); return clone(state.occurrences[index]); }); },
-    advanceCycle(id, steps = 1) { return repository.transaction(() => { const state = repository.getState(); const { index, item: cycle } = requireStateItem(state.blocks, id, "Cycle"); if (cycle.type !== "cycle") throw new ValidationError("Block is not a Cycle."); const next = advanceCyclePosition(cycle, { steps, now: now() }); replaceAt(state.blocks, index, next); touch(); addHistory({ type: "cycle", description: `Advanced Cycle: ${cycle.name}`, objectType: "block", objectId: id, snapshots: { from: cycle.config?.currentPosition || cycle.currentPosition || 0, to: next.config?.currentPosition || 0 } }); emit(EVENT_TYPES.CYCLE_ADVANCED, { cycleId: id, position: next.config?.currentPosition || 0 }); return clone(next); }); },
-    generateCycleSmallCycle(id) { return repository.transaction(() => { const state = repository.getState(); const { index, item: cycle } = requireStateItem(state.blocks, id, "Cycle"); if (cycle.type !== "cycle") throw new ValidationError("Block is not a Cycle."); let big = (state.cycleBigCycles || []).find((item) => item.cycleId === id && item.status === "open"); if (!big) { big = createBigCycleRuntime({ cycleId: id, relationships: cycle.relationships || [], smallCycleSize: cycle.config?.smallCycleSize || null, fairness: cycle.config?.fairness || {}, config: cycle.config, now: now() }); state.cycleBigCycles.push(big); } const small = generateNextSmallCycle({ bigCycle: big, relationships: cycle.relationships || [], now: now() }); state.cycleSmallCycles.push(small); big.smallCycles = [...(big.smallCycles || []), { id: small.id, sequence: small.slots, generatedAt: small.generatedAt }]; big.fairness = small.fairness; big.appearanceCoverage = small.coverage; if (big.participantRelationshipIds.every((relationshipId) => big.appearanceCoverage.includes(relationshipId))) { big.status = "completed"; big.completedAt = now().toISOString(); } state.blocks[index] = { ...cycle, config: { ...(cycle.config || {}), currentSmallCycleId: small.id }, updatedAt: now().toISOString() }; touch(); addHistory({ type: "cycle", description: `Generated Small Cycle: ${cycle.name}`, objectType: "cycleSmallCycle", objectId: small.id, snapshots: { sequence: small.slots } }); return clone(small); }); },
+    advanceCycle(id, steps = 1) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index, item: cycle } = requireStateItem(state.blocks, id, "Cycle");
+        if (cycle.type !== "cycle") throw new ValidationError("Block is not a Cycle.");
+        const runtime = ensureCycleRuntime(state, cycle);
+        const moved = advanceGeneratedCycleSlot(runtime.big, runtime.small, { steps, now: now() });
+        Object.assign(runtime.big, moved);
+        state.cycleBigCycles[runtime.bigIndex] = runtime.big;
+        state.blocks[index] = { ...cycle, config: { ...(cycle.config || {}), currentSmallCycleId: runtime.small.id, currentSlot: runtime.big.currentSlot }, updatedAt: now().toISOString() };
+        touch();
+        addHistory({ type: "cycle", description: `Advanced Cycle: ${cycle.name}`, objectType: "cycle", objectId: id, snapshots: { smallCycleId: runtime.small.id, slot: runtime.big.currentSlot } });
+        emit(EVENT_TYPES.CYCLE_ADVANCED, { cycleId: id, smallCycleId: runtime.small.id, slot: runtime.big.currentSlot });
+        return clone(state.blocks[index]);
+      });
+    },
+    generateCycleSmallCycle(id) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index, item: cycle } = requireStateItem(state.blocks, id, "Cycle");
+        if (cycle.type !== "cycle") throw new ValidationError("Block is not a Cycle.");
+        const runtime = ensureCycleRuntime(state, cycle);
+        const small = runtime.small;
+        state.blocks[index] = { ...cycle, config: { ...(cycle.config || {}), currentSmallCycleId: small.id, currentSlot: runtime.big.currentSlot }, updatedAt: now().toISOString() };
+        touch();
+        addHistory({ type: "cycle", description: `Generated Small Cycle: ${cycle.name}`, objectType: "cycleSmallCycle", objectId: small.id, snapshots: { sequence: small.slots, generationMode: small.generationMode } });
+        return clone(small);
+      });
+    },
     closePeriod(id, evaluation) { return repository.transaction(() => { const state = repository.getState(); const { index } = requireStateItem(state.periods, id, "Period"); const period = state.periods[index]; if (period.status === "closed") return clone(period); const closed = { ...period, status: "closed", closedAt: now().toISOString(), evaluation: clone(evaluation) }; state.periods[index] = closed; if (!state.targetEvaluations.some((item) => item.periodId === id)) state.targetEvaluations.push({ id: `${id}:evaluation`, periodId: id, ownerId: period.ownerId, evaluation: clone(evaluation), closedAt: closed.closedAt, snapshot: clone(period.snapshot) }); touch(); addHistory({ type: "period", description: "Closed evaluation period", objectType: "period", objectId: id, snapshots: { evaluation } }); emit(EVENT_TYPES.PERIOD_CLOSED, { periodId: id }); return clone(closed); }); },
     updateSettings(patch = {}) {
       return repository.transaction(() => {
