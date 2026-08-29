@@ -2,7 +2,7 @@ import { ValidationError } from "../shared/errors.js";
 import { createId } from "../shared/ids.js";
 import { clone, requireName } from "../shared/validation.js";
 import { finiteNumber, positiveInteger } from "../shared/numbers.js";
-import { validateResultFields } from "./results.js";
+import { validateResultFields, normalizeResultConfig } from "./results.js";
 
 export const ACTION_DIRECTIONS = ["do", "avoid"];
 export const COMPLETION_METHODS = ["quantity", "time"];
@@ -20,7 +20,7 @@ export function createAction({ id = null, name, description = "", tagIds = [], d
   if (!["active", "archived"].includes(status)) throw new ValidationError("Action status is invalid.");
   if (context.tags && tagIds.some((tagId) => !context.tags.some((tag) => tag.id === tagId && ["action", "both"].includes(tag.scope)))) throw new ValidationError("Action references a missing or result-only Tag.");
   const stamp = new Date(now).toISOString();
-  return { id: id || createId("action", now), name: requireName(name, "Action name"), description: String(description || ""), tagIds: [...new Set(tagIds)], direction, completion: normalizeCompletion(completion), resultFields: clone(resultFields) || [], avoid: direction === "avoid" ? clone(avoid) : null, status, createdAt: stamp, updatedAt: stamp };
+  return { id: id || createId("action", now), name: requireName(name, "Action name"), description: String(description || ""), tagIds: [...new Set(tagIds)], direction, completion: normalizeCompletion(completion), resultFields: (clone(resultFields) || []).map((field) => ({ ...field, config: normalizeResultConfig(field) })), avoid: direction === "avoid" ? clone(avoid) : null, status, createdAt: stamp, updatedAt: stamp };
 }
 
 export function validateAction(action, context = {}) {
@@ -44,10 +44,25 @@ export function snapshotActionForLog(action) {
 }
 
 export function versionResultFields(previous = [], next = [], now = new Date()) {
-  const oldById = new Map(previous.map((field) => [field.id, field])); const stamp = new Date(now).toISOString();
+  const oldById = new Map(previous.map((field) => [field.id, field]));
+  const stamp = new Date(now).toISOString();
+  const semantic = (field) => {
+    const config = normalizeResultConfig(field);
+    if (field.type === "text") {
+      delete config.displaySize;
+      delete config.placeholder;
+    }
+    return { type: field.type, required: Boolean(field.required), resultTagId: field.resultTagId || null, config };
+  };
   return next.map((field) => {
-    const old = oldById.get(field.id); if (!old) return { ...clone(field), definitionVersion: Math.max(1, Number(field.definitionVersion) || 1), updatedAt: stamp };
-    const changed = JSON.stringify({ ...old, updatedAt: undefined }) !== JSON.stringify({ ...field, updatedAt: undefined });
-    return { ...clone(field), definitionVersion: changed ? Math.max(Number(old.definitionVersion) || 1, Number(field.definitionVersion) || 1) + 1 : Number(old.definitionVersion) || 1, createdAt: old.createdAt || field.createdAt || stamp, updatedAt: stamp };
+    const old = oldById.get(field.id);
+    if (!old) return { ...clone(field), definitionVersion: Math.max(1, Number(field.definitionVersion) || 1), updatedAt: stamp };
+    const changed = JSON.stringify(semantic(old)) !== JSON.stringify(semantic(field));
+    return {
+      ...clone(field),
+      definitionVersion: changed ? Math.max(Number(old.definitionVersion) || 1, Number(field.definitionVersion) || 1) + 1 : Number(old.definitionVersion) || 1,
+      createdAt: old.createdAt || field.createdAt || stamp,
+      updatedAt: stamp
+    };
   });
 }
