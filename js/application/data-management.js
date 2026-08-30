@@ -361,13 +361,15 @@ function refreshRunsAfterLogRemoval(state, removed, now = new Date()) {
     const sourceSteps = Array.isArray(run.steps) ? run.steps : run.runtime?.steps || null;
     const childResult = refreshRunItemsAfterLogRemoval(state, run, sourceChildren, removed, stamp);
     const stepResult = refreshRunItemsAfterLogRemoval(state, run, sourceSteps, removed, stamp);
-    if (!childResult.changed && !stepResult.changed) continue;
+    const strippedRuntime = stripNestedRuntimeLogIds(run.runtime, removed);
+    const nestedRuntimeChanged = JSON.stringify(strippedRuntime) !== JSON.stringify(run.runtime);
+    if (!childResult.changed && !stepResult.changed && !nestedRuntimeChanged) continue;
     const children = childResult.items;
     const steps = stepResult.items;
     if (Array.isArray(run.children) || childResult.changed) run.children = children;
     if (Array.isArray(run.steps) || stepResult.changed) run.steps = steps;
     run.runtime = stripNestedRuntimeLogIds({
-      ...(run.runtime || {}),
+      ...(strippedRuntime || {}),
       ...(childResult.changed ? { children: clone(children) } : {}),
       ...(stepResult.changed ? { steps: clone(steps) } : {}),
       updatedAt: stamp
