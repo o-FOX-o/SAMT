@@ -549,6 +549,7 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
     markWorkflowStepNotApplicable(runId, stepId, reason = "") { return this.updateWorkflowStep(runId, stepId, "NOT_APPLICABLE", reason); },
     blockWorkflowStep(runId, stepId, reason = "") { return this.updateWorkflowStep(runId, stepId, "BLOCKED", reason); },
     unblockWorkflowStep(runId, stepId) { return this.updateWorkflowStep(runId, stepId, "AVAILABLE"); },
+    releaseWorkflowStep(runId, stepId) { return this.updateWorkflowStep(runId, stepId, "AVAILABLE"); },
     cancelRun(id) {
       return repository.transaction(() => {
         const state = repository.getState();
