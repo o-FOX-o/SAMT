@@ -323,8 +323,10 @@ export function nextCycleSlot({ smallCycle, currentSlot = -1, eligible = () => t
 export function currentGeneratedCycleSlot(bigCycle, smallCycle = null) {
   const source = smallCycle || (bigCycle?.smallCycles || []).find((item) => item.id === bigCycle?.currentSmallCycleId);
   if (!source?.slots?.length) return null;
-  const index = Math.max(-1, Math.min(Number(bigCycle?.currentSlot ?? -1), source.slots.length - 1));
-  return index < 0 ? source.slots[0] : source.slots[index] || null;
+  const index = Number(bigCycle?.currentSlot ?? -1);
+  if (index < 0) return source.slots[0] || null;
+  if (index >= source.slots.length) return null;
+  return source.slots[index] || null;
 }
 
 export function advanceGeneratedCycleSlot(bigCycle, smallCycle, { steps = 1, now = new Date() } = {}) {
