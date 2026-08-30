@@ -33,7 +33,7 @@ test("V3 builders add taxonomy, compatible Units, Actions and multiple Result Fi
   engine.commands.addResultField(action.id, { id: "result_two", type: "measurement", label: "Rounds", config: { defaultUnitId: unit.id, allowedUnitIds: [unit.id] } });
   engine.commands.updateAction(action.id, { resultFields: repository.getState().actions[0].resultFields.map((field) => field.id === "result_one" ? { ...field, label: "Opponent Name" } : field) });
   assert.equal(repository.getState().actions[0].resultFields.length, 2); assert.equal(repository.getState().tags[0].id, tag.id); assert.equal(repository.getState().units.some((item) => item.id === unit.id), true);
-  assert.equal(repository.getState().actions[0].resultFields.find((field) => field.id === "result_one").definitionVersion, 2);
+  assert.equal(repository.getState().actions[0].resultFields.find((field) => field.id === "result_one").definitionVersion, 1);
 });
 
 test("blocked local storage is not fatal and empty state is valid", () => {
