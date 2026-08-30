@@ -32,7 +32,7 @@ function targetDeficit(progress = {}, config = {}) {
 
 function targetUrgency(row, now) {
   if (row.progress?.reached || row.progress?.status === "OVER_TARGET") return -1;
-  const end = row.period?.end || row.deadlineAt;
+  const end = row.periodBounds?.end || row.deadlineAt;
   const remainingDays = end ? Math.max(1 / 24, (new Date(end).getTime() - new Date(now).getTime()) / 86400000) : 365;
   return targetDeficit(row.progress, row.config) / remainingDays + (row.deadlineAt ? 1 / remainingDays : 0);
 }
