@@ -287,6 +287,40 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
     };
   }
 
+  function assertContextAllowsLog(state, contextRefs = []) {
+    const allRelationships = state.blocks.flatMap((block) => (block.relationships || []).map((relationship) => ({ block, relationship })));
+    const relationshipFor = (id) => allRelationships.find((item) => item.relationship.id === id)?.relationship || null;
+    for (const reference of contextRefs) {
+      if (reference.occurrenceId) {
+        const occurrence = state.occurrences.find((item) => item.id === reference.occurrenceId);
+        if (!occurrence) throw new NotFoundError("Occurrence not found: " + reference.occurrenceId);
+        const relationship = relationshipFor(occurrence.relationshipId);
+        if (["completed", "skipped", "missed", "expired", "excused", "not_applicable"].includes(String(occurrence.status || "").toLowerCase()) &&
+          !(occurrence.status === "completed" && relationship?.config?.allowExtraLogs === true)) {
+          throw new ValidationError("This Occurrence is closed. Enable Allow extra logs before recording another log.");
+        }
+      }
+      if (reference.runId) {
+        const run = state.runs.find((item) => item.id === reference.runId);
+        if (!run) throw new NotFoundError("Run not found: " + reference.runId);
+        const relationship = reference.relationshipId
+          ? (run.snapshot?.relationships || run.snapshot?.block?.relationships || []).find((item) => item.id === reference.relationshipId)
+          : null;
+        const runtimeChild = reference.relationshipId
+          ? (run.children || run.runtime?.children || []).find((item) => (item.relationshipId || item.id) === reference.relationshipId)
+          : null;
+        const runtimeStep = reference.relationshipId
+          ? (run.steps || run.runtime?.steps || []).find((item) => (item.relationshipId || item.id) === reference.relationshipId)
+          : null;
+        const childState = runtimeChild?.state || runtimeStep?.state;
+        if (["COMPLETED", "SKIPPED", "EXCUSED", "NOT_APPLICABLE", "CANCELLED"].includes(childState) &&
+          !(childState === "COMPLETED" && relationship?.config?.allowExtraLogs === true)) {
+          throw new ValidationError("This Run item is closed. Enable Allow extra logs before recording another log.");
+        }
+      }
+    }
+  }
+
   function updateRunAfterActionLog(state, run, block, action, input, log) {
     const relationship = actionChildForRun(run, block, action.id, input.relationshipId);
     if (!relationship) return;
@@ -534,6 +568,9 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         let run = input.runId ? state.runs.find((candidate) => candidate.id === input.runId) : null;
         if (input.runId && !run) throw new NotFoundError(`Run not found: ${input.runId}`);
         const contextRefs = clone(input.contextRefs || []);
+        if (input.occurrenceId && !contextRefs.some((reference) => reference.occurrenceId === input.occurrenceId)) {
+          contextRefs.push({ occurrenceId: input.occurrenceId, relationshipId: input.relationshipId || null });
+        }
         if (run) {
           const context = { blockId: run.blockId, runId: run.id, relationshipId: input.relationshipId || null, occurrenceId: input.occurrenceId || null };
           const existingRunReference = contextRefs.find((reference) => reference.runId === run.id && !reference.occurrenceId);
@@ -548,6 +585,7 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
           if (existingBlockReference) Object.assign(existingBlockReference, context);
           else contextRefs.push(context);
         }
+        assertContextAllowsLog(state, contextRefs);
         const log = createActionLog({ ...input, contextRefs, action, finalizing: Boolean(input.finalizing), now: now(), units: state.units });
         if (state.actionLogs.some((candidate) => candidate.id === log.id)) throw new ConflictError(`Action Log ID already exists: ${log.id}`);
         for (const reference of log.contextRefs || []) {
