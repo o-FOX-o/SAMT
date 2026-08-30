@@ -398,3 +398,67 @@ test('scheduled Activations gate real Run creation and remain idempotent', () =>
   assert.equal(repository.getState().activations[0].runCount, 1);
   assert.equal(run.children[0].state, 'AVAILABLE');
 });
+
+
+test('Action List Activations gate occurrence generation and honor calendar local time', () => {
+  const { clock, repository, engine } = harness('2026-01-01T08:00:00Z');
+  const item = action(engine, 'action_activation_list', 'Activated list item');
+  const list = engine.commands.createBlock({
+    id: 'block_activation_list',
+    type: 'action_list',
+    name: 'Activated list',
+    definitionStatus: 'ACTIVE'
+  });
+  const relationship = engine.commands.addRelationship(list.id, {
+    id: 'relationship_activation_list',
+    kind: 'action',
+    refId: item.id,
+    config: { schedule: { mode: 'calendar', calendarKind: 'daily', dateOnly: false, time: '09:30' } }
+  });
+  engine.commands.createActivation({
+    id: 'activation_list_start',
+    blockId: list.id,
+    mode: 'schedule',
+    recurrence: { mode: 'calendar', calendarKind: 'daily', startDate: '2026-01-02' },
+    label: 'Enable list'
+  });
+
+  assert.equal(engine.reconcile({ now: clock.now(), timezone: 'UTC' }).created.length, 0);
+  clock.set('2026-01-02T09:29:00Z');
+  assert.equal(engine.reconcile({ now: clock.now(), timezone: 'UTC' }).created.length, 0);
+  clock.set('2026-01-02T09:30:00Z');
+  assert.equal(engine.reconcile({ now: clock.now(), timezone: 'UTC' }).created.length, 1);
+  const occurrence = repository.getState().occurrences[0];
+  assert.equal(occurrence.relationshipId, relationship.id);
+  assert.equal(occurrence.scheduledAt, '2026-01-02T09:30:00.000Z');
+});
+
+test('Cycle deferred and unavailable outcomes keep the generated slot for later', () => {
+  const { repository, engine } = harness();
+  const item = action(engine, 'action_cycle_defer', 'Deferred slot');
+  const cycle = engine.commands.createBlock({
+    id: 'block_cycle_defer',
+    type: 'cycle',
+    name: 'Deferred cycle',
+    definitionStatus: 'ACTIVE',
+    config: { generationMode: 'exact_frequency', smallCycleSize: 1 }
+  });
+  const relationship = engine.commands.addRelationship(cycle.id, {
+    id: 'relationship_cycle_defer',
+    kind: 'action',
+    refId: item.id,
+    config: { exactCount: 1, allowDefer: true, allowUnavailable: true, manualCompletion: true }
+  });
+  const small = engine.commands.generateCycleSmallCycle(cycle.id);
+  assert.equal(small.slots[0].relationshipId, relationship.id);
+
+  let runtime = repository.getState().cycleBigCycles[0];
+  const deferred = engine.commands.resolveCycleSlot(cycle.id, { outcome: 'deferred' });
+  assert.equal(deferred.bigCycle.currentSlot, 0);
+  assert.deepEqual(deferred.bigCycle.appearanceCoverage, []);
+  assert.equal(deferred.bigCycle.resolutions.at(-1).outcome, 'deferred');
+
+  const completed = engine.commands.resolveCycleSlot(cycle.id, { outcome: 'completed' });
+  assert.equal(completed.bigCycle.status, 'completed');
+  assert.equal(completed.bigCycle.completionCoverage.includes(relationship.id), true);
+});
