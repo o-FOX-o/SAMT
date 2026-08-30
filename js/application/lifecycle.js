@@ -303,13 +303,17 @@ export function reconcileTemporalState({
     for (const period of state.periods || []) {
       if (period.status !== "open" || period.style === "rolling" || !period.end || current < new Date(period.end)) continue;
       const target = state.blocks?.find((block) => block.id === period.ownerId && block.type === "target");
+      // A period closes against the configuration snapshot captured when it
+      // opened, so later definition edits cannot rewrite its meaning.
+      const targetForPeriod = target ? { ...target, config: { ...(target.config || {}), ...(clone(period.snapshot) || {}) } } : null;
       const avoidAction = state.actions?.find((action) => action.id === period.ownerId && action.direction === "avoid");
       const updated = evaluatePeriod({
         period,
-        target,
+        target: targetForPeriod,
         avoid: avoidAction?.avoid || period.snapshot?.avoid || null,
         logs,
         actions: state.actions || [],
+        blocks: state.blocks || [],
         units: state.units || [],
         now: current
       });
