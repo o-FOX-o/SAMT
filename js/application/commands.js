@@ -8,7 +8,7 @@ import { createActionLog } from "../domain/logs.js";
 import { createBlock, setDefinitionStatus, isRunCapableBlockType } from "../domain/blocks.js";
 import { createRelationship, validateBlockGraph } from "../domain/relationships.js";
 import { createOccurrence } from "../domain/occurrences.js";
-import { resolveOccurrenceStatus } from "../domain/occurrences.js";
+import { resolveOccurrenceStatus, aggregateOccurrenceProgress } from "../domain/occurrences.js";
 import { createRun, startRun as startDomainRun, finishRun as finishDomainRun, pauseRun as pauseDomainRun, resumeRun as resumeDomainRun, cancelRun as cancelDomainRun, appendRunTransition } from "../domain/runs.js";
 import { returnToWorkflowStep as returnToDomainWorkflowStep, transitionWorkflowStep } from "../domain/workflows.js";
 import { initializeRoutineRuntime, updateRoutineChild, evaluateRoutineRun } from "../domain/routines.js";
@@ -545,6 +545,7 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         const state = repository.getState();
         const block = state.blocks.find((candidate) => candidate.id === input.blockId);
         if (!block) throw new NotFoundError(`Block not found: ${input.blockId}`);
+        if (!["action_list", "routine", "workflow", "project", "cycle"].includes(block.type)) throw new ValidationError(`${block.type} Blocks do not support Activations.`);
         if (!input.allowMultiple && state.activations.some((activation) => activation.blockId === block.id && activation.status === "active")) {
           throw new ConflictError("An active Activation already exists for this Block.");
         }
@@ -731,13 +732,44 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         state.scopeChangeEvents = [...(state.scopeChangeEvents || []), { id: makeId("scope_change"), blockId: block.id, runId, changedAt: now().toISOString(), changes: clone(actualChanges) }];
         touch();
         addHistory({ type: "project", description: "Applied Project scope change to active Run", objectType: "run", objectId: runId, metadata: { changes: clone(actualChanges) } });
-        return clone(next);
+        return clone(state.runs[index]);
       });
     },
     createOccurrence(input = {}) { return repository.transaction(() => { const state = repository.getState(); const occurrence = createOccurrence({ ...input, id: input.id || makeId("occurrence"), now: now() }); const duplicate = state.occurrences.find((item) => item.id === occurrence.id || occurrence.scheduledAt != null && item.relationshipId === occurrence.relationshipId && item.scheduledAt === occurrence.scheduledAt); if (duplicate) return clone(duplicate); state.occurrences.push(occurrence); touch(); emit(EVENT_TYPES.OCCURRENCE_CREATED, { occurrenceId: occurrence.id }); return clone(occurrence); }); },
     completeOccurrence(id) { return this.resolveOccurrence(id, "completed"); },
     skipOccurrence(id, reason = "") { return this.resolveOccurrence(id, "skipped", reason); },
-    resolveOccurrence(id, status, reason = "") { return repository.transaction(() => { const state = repository.getState(); const { index } = requireStateItem(state.occurrences, id, "Occurrence"); const occurrence = state.occurrences[index]; if (!TERMINAL_OCCURRENCES.includes(status)) throw new ValidationError("Occurrence status is invalid."); const relationship = state.blocks.flatMap((block) => block.relationships || []).find((candidate) => candidate.id === occurrence.relationshipId); if (status === "skipped" && relationship?.config?.allowSkip !== true) throw new ValidationError("Skipping this occurrence is not allowed for this relationship."); if (status === "skipped" && relationship?.config?.requireSkipReason && !String(reason || "").trim()) throw new ValidationError("A skip reason is required."); state.occurrences[index] = { ...occurrence, status, reason: reason || null, updatedAt: now().toISOString() }; touch(); addHistory({ type: "occurrence", description: `${status} occurrence`, objectType: "occurrence", objectId: id, metadata: { reason } }); emit(status === "completed" ? EVENT_TYPES.OCCURRENCE_COMPLETED : status === "missed" ? EVENT_TYPES.OCCURRENCE_MISSED : EVENT_TYPES.OCCURRENCE_STATUS_CHANGED, { occurrenceId: id, status }); return clone(state.occurrences[index]); }); },
+    resolveOccurrence(id, status, reason = "") {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index } = requireStateItem(state.occurrences, id, "Occurrence");
+        const occurrence = state.occurrences[index];
+        if (!TERMINAL_OCCURRENCES.includes(status)) throw new ValidationError("Occurrence status is invalid.");
+        const relationship = state.blocks.flatMap((block) => block.relationships || [])
+          .find((candidate) => candidate.id === occurrence.relationshipId);
+        if (status === "skipped" && relationship?.config?.allowSkip !== true) {
+          throw new ValidationError("Skipping this occurrence is not allowed for this relationship.");
+        }
+        if (status === "skipped" && relationship?.config?.requireSkipReason && !String(reason || "").trim()) {
+          throw new ValidationError("A skip reason is required.");
+        }
+        if (status === "completed" && relationship?.config?.manualCompletion !== true) {
+          const action = relationship?.kind === "action"
+            ? state.actions.find((candidate) => candidate.id === relationship.refId)
+            : null;
+          if (action) {
+            const progress = aggregateOccurrenceProgress({ occurrence, logs: state.actionLogs || [], action });
+            if (!isActionCompletionAchieved({ action, log: progress })) {
+              throw new ValidationError("Log enough of this Action to satisfy its completion requirement, or enable manual completion for the relationship.");
+            }
+          }
+        }
+        state.occurrences[index] = { ...occurrence, status, reason: reason || null, updatedAt: now().toISOString() };
+        touch();
+        addHistory({ type: "occurrence", description: `${status} occurrence`, objectType: "occurrence", objectId: id, metadata: { reason } });
+        emit(status === "completed" ? EVENT_TYPES.OCCURRENCE_COMPLETED : status === "missed" ? EVENT_TYPES.OCCURRENCE_MISSED : EVENT_TYPES.OCCURRENCE_STATUS_CHANGED, { occurrenceId: id, status });
+        return clone(state.occurrences[index]);
+      });
+    },
     advanceCycle(id, steps = 1) {
       return repository.transaction(() => {
         const state = repository.getState();
