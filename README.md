@@ -32,3 +32,30 @@ node --test tests/*.test.js
 
 See [ARCHITECTURE.md](ARCHITECTURE.md), [DOMAIN_RULES.md](DOMAIN_RULES.md) and
 [FEATURE_PARITY.md](FEATURE_PARITY.md) for the boundaries and locked rules.
+
+## Run SAMT on a phone
+
+The simplest phone setup is GitHub Pages:
+
+1. Open the repository-specific Pages settings:
+   [o-FOX-o/SAMT Pages settings](https://github.com/o-FOX-o/SAMT/settings/pages).
+   The account-level page at `github.com/settings/pages` is not the one to use.
+2. Under **Build and deployment**, choose **Deploy from a branch**, select
+   `main` and `/(root)`, then save.
+3. Open [https://o-FOX-o.github.io/SAMT/](https://o-FOX-o.github.io/SAMT/)
+   on the phone after the deployment finishes.
+
+SAMT stores its browser data on the device where it is opened. To move data
+between a computer and phone, use **Settings → Import / Export → Download Full
+Backup** (or **Copy Backup JSON**) on the source device, then use **Choose JSON
+File** or **Paste JSON** on the phone.
+
+For a private/local preview, serve the repository from a computer on the same
+Wi-Fi network:
+
+```sh
+python3 -m http.server 8080
+```
+
+Then open `http://COMPUTER_IP:8080/` on the phone, replacing
+`COMPUTER_IP` with the computer's local network address.
