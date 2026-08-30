@@ -35,6 +35,8 @@ function cycleCard(state, cycle) {
   const big = runtime.big;
   const bigNumber = big ? (state.cycleBigCycles || []).filter((item) => item.cycleId === cycle.id).indexOf(big) + 1 : null;
   const canResolve = Boolean(runtime.current && runtime.currentRelationship);
+  const currentActionId = runtime.currentRelationship?.kind === "action" ? runtime.currentRelationship.refId : null;
+  const currentContext = canResolve ? " data-id=\"" + esc(currentActionId || cycle.id) + "\" data-block-id=\"" + esc(cycle.id) + "\" data-relationship-id=\"" + esc(runtime.currentRelationship?.id || "") + "\"" : "";
   const currentSlotText = runtime.current ? "Slot " + (runtime.index + 1) + " of " + runtime.slots.length : "Generate a Small Cycle";
   const needsGeneration = !runtime.small || !runtime.slots.length || runtime.index >= runtime.slots.length;
   const nextButton = needsGeneration
@@ -42,13 +44,19 @@ function cycleCard(state, cycle) {
     : runtime.index >= 0 && runtime.index < runtime.slots.length - 1
       ? '<button class="samt-button ghost" data-action="advance-cycle" data-id="' + esc(cycle.id) + '">Next</button>'
       : "";
+  const actionControl = currentActionId
+    ? '<button class="samt-button primary" data-action="open-log"' + currentContext + '>＋ Log</button>' + (runtime.currentRelationship.config?.manualCompletion === true ? '<button class="samt-button ghost" data-action="resolve-cycle-slot" data-id="' + esc(cycle.id) + '" data-outcome="completed">Complete</button>' : '')
+    : canResolve ? '<button class="samt-button primary" data-action="resolve-cycle-slot" data-id="' + esc(cycle.id) + '" data-outcome="completed">Complete</button>' : '';
+  const skipControl = canResolve && runtime.currentRelationship?.config?.allowSkip === true ? '<button class="samt-button ghost" data-action="resolve-cycle-slot" data-id="' + esc(cycle.id) + '" data-outcome="skipped" data-require-reason="true">Skip</button>' : '';
+  const deferControl = canResolve && runtime.currentRelationship?.config?.allowDefer === true ? '<button class="samt-button ghost" data-action="resolve-cycle-slot" data-id="' + esc(cycle.id) + '" data-outcome="deferred">Defer</button>' : '';
+  const unavailableControl = canResolve && runtime.currentRelationship?.config?.allowUnavailable === true ? '<button class="samt-button ghost" data-action="resolve-cycle-slot" data-id="' + esc(cycle.id) + '" data-outcome="unavailable">Unavailable</button>' : '';
   return '<article class="samt-card">' +
     '<div class="samt-card-head"><div><a class="samt-entity-link" href="#/blocks/' + encodeURIComponent(cycle.id) + '"><h2>' + esc(cycle.name) + '</h2></a><span class="samt-badge">' + esc(cycle.config?.generationMode || "simple_ordered") + '</span></div><span class="samt-status">' + esc(statusLabel(cycle.definitionStatus)) + '</span></div>' +
     '<p class="samt-cycle-current">Current generated item: <strong>' + esc(currentName) + '</strong></p>' +
     '<dl class="samt-definition-list"><div><dt>Small Cycle</dt><dd>' + esc(String(runtime.small?.smallCycleNumber || big?.smallCycles?.length || "—")) + ' · ' + esc(currentSlotText) + '</dd></div><div><dt>Big Cycle</dt><dd>' + esc(String(big?.bigCycleNumber || (bigNumber || "—"))) + ' · ' + esc(big?.status || "not started") + '</dd></div><div><dt>Appearance</dt><dd>' + esc(coverageLabel(big?.appearanceCoverage, big?.participantRelationshipIds?.length || relationships.length)) + '</dd></div><div><dt>Completion</dt><dd>' + esc(coverageLabel(big?.completionCoverage, big?.participantRelationshipIds?.length || relationships.length)) + '</dd></div></dl>' +
     '<div class="samt-sequence">' + (runtime.slots.length ? runtime.slots.map((slot, index) => slotLabel(state, cycle, slot, index, runtime.current ? runtime.displayIndex : -1)).join("") : '<span class="samt-muted">No generated slots yet.</span>') + '</div>' +
     '<div class="samt-card-actions">' +
-      (canResolve ? '<button class="samt-button primary" data-action="resolve-cycle-slot" data-id="' + esc(cycle.id) + '" data-outcome="completed">Complete / Log</button><button class="samt-button ghost" data-action="resolve-cycle-slot" data-id="' + esc(cycle.id) + '" data-outcome="skipped" data-require-reason="true">Skip</button>' : "") +
+      actionControl + skipControl + deferControl + unavailableControl +
       nextButton +
       '<a class="samt-button ghost" href="#/blocks/' + encodeURIComponent(cycle.id) + '">Open</a><a class="samt-button ghost" href="#/blocks/' + encodeURIComponent(cycle.id) + '/edit">Edit</a>' +
     '</div></article>';
