@@ -37,6 +37,61 @@ function targetUrgency(row, now) {
   return targetDeficit(row.progress, row.config) / remainingDays + (row.deadlineAt ? 1 / remainingDays : 0);
 }
 
+function targetResultFieldForHome(state, target) {
+  const config = target?.config || {};
+  return (state.actions || []).flatMap((action) => action.resultFields || [])
+    .find((field) => field.id === config.sourceResultFieldId || config.sourceResultTagId && field.resultTagId === config.sourceResultTagId) || null;
+}
+
+function calculateHomeTargetProgress(state, targetId, { now, timezone, memo = new Map(), visiting = new Set() } = {}) {
+  if (memo.has(targetId)) return memo.get(targetId);
+  const target = (state.blocks || []).find((block) => block.id === targetId && block.type === "target");
+  if (!target) {
+    const missing = { targetId, reached: false, status: "INVALID", error: "Required Target dependency is missing." };
+    memo.set(targetId, missing);
+    return missing;
+  }
+  if (visiting.has(targetId)) {
+    const cyclic = { targetId, reached: false, status: "INVALID", error: "Required Target dependency cycle." };
+    memo.set(targetId, cyclic);
+    return cyclic;
+  }
+  visiting.add(targetId);
+  const config = target.config || {};
+  const childResults = (config.requiredChildTargetIds || []).map((childId) => calculateHomeTargetProgress(state, childId, { now, timezone, memo, visiting }));
+  const period = config.period && !["session", "all_time"].includes(config.period)
+    ? calculatePeriodBounds({
+      period: config.period,
+      style: config.periodStyle || "calendar",
+      at: now,
+      timezone: config.timezone || timezone,
+      weekStartsOn: config.weekStartsOn ?? state.settings?.weekStartsOn ?? 1,
+      rollingWindowDays: config.rollingWindowDays,
+      customStart: config.customStart,
+      customEnd: config.customEnd
+    })
+    : null;
+  let progress;
+  try {
+    progress = calculateTargetProgress({
+      target,
+      logs: state.actionLogs || [],
+      period,
+      actions: state.actions || [],
+      blocks: state.blocks || [],
+      resultField: targetResultFieldForHome(state, target),
+      units: state.units || [],
+      childResults
+    });
+  } catch (error) {
+    progress = { targetId, status: "INVALID", actual: null, targetValue: config.targetValue ?? 0, percentage: 0, reached: false, error: error.message };
+  }
+  const result = { ...progress, reached: Boolean(progress.reached || progress.status === "reached" || progress.status === "REACHED") };
+  visiting.delete(targetId);
+  memo.set(targetId, result);
+  return result;
+}
+
 export function getHomeViewModel({ state, now = new Date(), timezone = state?.settings?.timezone || "UTC" } = {}) {
   const safeState = state || { actions: [], blocks: [], occurrences: [], actionLogs: [], settings: {} };
   const running = getRunningRuns(safeState);
@@ -54,12 +109,11 @@ export function getHomeViewModel({ state, now = new Date(), timezone = state?.se
     }
     avoid.push({ actionId: action.id, name: action.name, metric: config?.metric || "duration", status: config ? result.status : "UNCONFIGURED", ...result });
   }
+  const targetMemo = new Map();
   const targetRows = (safeState.blocks || []).filter((block) => block.type === "target" && block.definitionStatus === "ACTIVE").map((target) => {
     const config = target.config || {};
     const period = config.period && !["session", "all_time"].includes(config.period) ? calculatePeriodBounds({ period: config.period, style: config.periodStyle || "calendar", at: now, timezone: config.timezone || timezone, weekStartsOn: config.weekStartsOn ?? safeState.settings?.weekStartsOn ?? 1, rollingWindowDays: config.rollingWindowDays, customStart: config.customStart, customEnd: config.customEnd }) : null;
-    let progress;
-    try { progress = calculateTargetProgress({ target, logs: safeState.actionLogs || [], period, actions: safeState.actions || [], blocks: safeState.blocks || [], units: safeState.units || [] }); }
-    catch (error) { progress = { status: "NOT_CONFIGURED", actual: null, targetValue: config.targetValue ?? 0, percentage: 0, error: error.message }; }
+    const progress = calculateHomeTargetProgress(safeState, target.id, { now, timezone, memo: targetMemo });
     return { targetId: target.id, name: target.name, period: config.period || "all_time", periodBounds: period, deadlineAt: config.deadline || null, config, progress };
   });
   const today = targetRows.filter((target) => target.period === "day" || target.period === "session");
