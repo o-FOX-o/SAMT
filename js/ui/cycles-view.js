@@ -10,19 +10,20 @@ function runtimeForCycle(state, cycle) {
     : null;
   const slots = small?.slots || [];
   const index = Number(big?.currentSlot ?? -1);
-  const current = index >= 0 && index < slots.length ? slots[index] : slots[0] || null;
+  const displayIndex = index < 0 ? 0 : index;
+  const current = small && slots.length && index >= -1 && index < slots.length ? slots[displayIndex] || null : null;
   const currentRelationship = current ? (cycle.relationships || []).find((relationship) => relationship.id === current.relationshipId) : null;
-  return { big, small, slots, index, current, currentRelationship };
+  return { big, small, slots, index, displayIndex, current, currentRelationship };
 }
 
 function coverageLabel(ids = [], total = 0) {
   return total ? ids.length + " / " + total : "0 / 0";
 }
 
-function slotLabel(state, cycle, slot, index) {
+function slotLabel(state, cycle, slot, index, currentIndex = -1) {
   const relationship = (cycle.relationships || []).find((candidate) => candidate.id === slot?.relationshipId);
   const outcome = slot?.outcome ? " · " + statusLabel(slot.outcome) : "";
-  return '<span class="samt-sequence-item ' + (index === 0 ? "current" : "") + '">' +
+  return '<span class="samt-sequence-item ' + (index === currentIndex ? "current" : "") + '">' +
     (index + 1) + ". " + esc(relationship ? relationshipLabel(state, relationship) : slot?.relationshipId || "Unknown") +
     esc(outcome) + "</span>";
 }
@@ -34,14 +35,17 @@ function cycleCard(state, cycle) {
   const big = runtime.big;
   const canResolve = Boolean(runtime.current && runtime.currentRelationship);
   const currentSlotText = runtime.current ? "Slot " + (runtime.index + 1) + " of " + runtime.slots.length : "Generate a Small Cycle";
-  const nextButton = runtime.big && runtime.small && runtime.index < runtime.slots.length - 1
-    ? '<button class="samt-button ghost" data-action="advance-cycle" data-id="' + esc(cycle.id) + '">Next</button>'
-    : '<button class="samt-button ghost" data-action="generate-small-cycle" data-id="' + esc(cycle.id) + '">Generate Small Cycle</button>';
+  const needsGeneration = !runtime.small || !runtime.slots.length || runtime.index >= runtime.slots.length;
+  const nextButton = needsGeneration
+    ? '<button class="samt-button ghost" data-action="generate-small-cycle" data-id="' + esc(cycle.id) + '">Generate next Small Cycle</button>'
+    : runtime.index >= 0 && runtime.index < runtime.slots.length - 1
+      ? '<button class="samt-button ghost" data-action="advance-cycle" data-id="' + esc(cycle.id) + '">Next</button>'
+      : "";
   return '<article class="samt-card">' +
     '<div class="samt-card-head"><div><a class="samt-entity-link" href="#/blocks/' + encodeURIComponent(cycle.id) + '"><h2>' + esc(cycle.name) + '</h2></a><span class="samt-badge">' + esc(cycle.config?.generationMode || "simple_ordered") + '</span></div><span class="samt-status">' + esc(statusLabel(cycle.definitionStatus)) + '</span></div>' +
     '<p class="samt-cycle-current">Current generated item: <strong>' + esc(currentName) + '</strong></p>' +
     '<dl class="samt-definition-list"><div><dt>Small Cycle</dt><dd>' + esc(String(runtime.small?.smallCycleNumber || big?.smallCycles?.length || "—")) + ' · ' + esc(currentSlotText) + '</dd></div><div><dt>Big Cycle</dt><dd>' + esc(String(big?.bigCycleNumber || (big ? 1 : "—"))) + ' · ' + esc(big?.status || "not started") + '</dd></div><div><dt>Appearance</dt><dd>' + esc(coverageLabel(big?.appearanceCoverage, big?.participantRelationshipIds?.length || relationships.length)) + '</dd></div><div><dt>Completion</dt><dd>' + esc(coverageLabel(big?.completionCoverage, big?.participantRelationshipIds?.length || relationships.length)) + '</dd></div></dl>' +
-    '<div class="samt-sequence">' + (runtime.slots.length ? runtime.slots.map((slot, index) => slotLabel(state, cycle, slot, index)).join("") : '<span class="samt-muted">No generated slots yet.</span>') + '</div>' +
+    '<div class="samt-sequence">' + (runtime.slots.length ? runtime.slots.map((slot, index) => slotLabel(state, cycle, slot, index, runtime.current ? runtime.displayIndex : -1)).join("") : '<span class="samt-muted">No generated slots yet.</span>') + '</div>' +
     '<div class="samt-card-actions">' +
       (canResolve ? '<button class="samt-button primary" data-action="resolve-cycle-slot" data-id="' + esc(cycle.id) + '" data-outcome="completed">Complete / Log</button><button class="samt-button ghost" data-action="resolve-cycle-slot" data-id="' + esc(cycle.id) + '" data-outcome="skipped" data-require-reason="true">Skip</button>' : "") +
       nextButton +
