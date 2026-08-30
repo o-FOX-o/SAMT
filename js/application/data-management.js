@@ -341,6 +341,18 @@ function refreshRunItemsAfterLogRemoval(state, run, items, removed, stamp) {
   return { items: nextItems, changed };
 }
 
+function stripNestedRuntimeLogIds(value, removed) {
+  if (Array.isArray(value)) return value.map((item) => stripNestedRuntimeLogIds(item, removed));
+  if (!value || typeof value !== "object") return value;
+  const next = { ...value };
+  if (Array.isArray(next.logIds)) next.logIds = next.logIds.filter((id) => !removed.has(id));
+  if (Array.isArray(next.completedLogIds)) next.completedLogIds = next.completedLogIds.filter((id) => !removed.has(id));
+  for (const key of ["children", "steps"]) if (Array.isArray(next[key])) next[key] = next[key].map((item) => stripNestedRuntimeLogIds(item, removed));
+  if (next.runtime && typeof next.runtime === "object") next.runtime = stripNestedRuntimeLogIds(next.runtime, removed);
+  if (next.childRuntime && typeof next.childRuntime === "object") next.childRuntime = stripNestedRuntimeLogIds(next.childRuntime, removed);
+  return next;
+}
+
 function refreshRunsAfterLogRemoval(state, removed, now = new Date()) {
   const stamp = new Date(now).toISOString();
   const affectedRuns = [];
@@ -354,12 +366,12 @@ function refreshRunsAfterLogRemoval(state, removed, now = new Date()) {
     const steps = stepResult.items;
     if (Array.isArray(run.children) || childResult.changed) run.children = children;
     if (Array.isArray(run.steps) || stepResult.changed) run.steps = steps;
-    run.runtime = {
+    run.runtime = stripNestedRuntimeLogIds({
       ...(run.runtime || {}),
       ...(childResult.changed ? { children: clone(children) } : {}),
       ...(stepResult.changed ? { steps: clone(steps) } : {}),
       updatedAt: stamp
-    };
+    }, removed);
     const items = children || steps || [];
     const required = items.filter((item) => item.required !== false);
     const satisfied = required.every((item) => ["COMPLETED", "EXCUSED", "NOT_APPLICABLE"].includes(item.state));
