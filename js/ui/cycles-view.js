@@ -33,7 +33,7 @@ function cycleCard(state, cycle) {
   const relationships = cycle.relationships || [];
   const currentName = runtime.currentRelationship ? relationshipLabel(state, runtime.currentRelationship) : "No generated slot";
   const big = runtime.big;
-  const bigNumber = big ? allBig.indexOf(big) + 1 : null;
+  const bigNumber = big ? (state.cycleBigCycles || []).filter((item) => item.cycleId === cycle.id).indexOf(big) + 1 : null;
   const canResolve = Boolean(runtime.current && runtime.currentRelationship);
   const currentSlotText = runtime.current ? "Slot " + (runtime.index + 1) + " of " + runtime.slots.length : "Generate a Small Cycle";
   const needsGeneration = !runtime.small || !runtime.slots.length || runtime.index >= runtime.slots.length;
