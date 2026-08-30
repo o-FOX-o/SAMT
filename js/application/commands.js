@@ -401,7 +401,9 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
     const slotIndex = Math.max(0, Number(runtime.big.currentSlot ?? 0));
     const resolved = resolveDomainCycleSlot({ slot, outcome, allowSkip: relationship?.config?.allowSkip === true, reason, now: now() });
     let updatedBig = recordCycleResolution({ bigCycle: runtime.big, smallCycle: runtime.small, relationshipId: resolved.relationshipId, slot: slotIndex, outcome: resolved.outcome, now: now() });
-    updatedBig = advanceGeneratedCycleSlot(updatedBig, runtime.small, { steps: 1, now: now() });
+    if (!['deferred', 'unavailable'].includes(resolved.outcome)) {
+      updatedBig = advanceGeneratedCycleSlot(updatedBig, runtime.small, { steps: 1, now: now() });
+    }
     state.cycleBigCycles[runtime.bigIndex] = updatedBig;
     state.blocks[index] = { ...cycle, config: { ...(cycle.config || {}), currentSmallCycleId: runtime.small.id, currentSlot: updatedBig.currentSlot }, updatedAt: now().toISOString() };
     return { cycle: state.blocks[index], bigCycle: updatedBig, smallCycle: runtime.small, resolution: resolved };
