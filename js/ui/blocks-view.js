@@ -113,18 +113,24 @@ function projectRun(state, block, run) {
 }
 function cycleRuntime(state, block) {
   const all = (state.cycleBigCycles || []).filter((item) => item.cycleId === block.id);
-  const big = all.find((item) => item.status === "open") || all[all.length - 1];
+  const big = all.find((item) => item.status === "open") || all[all.length - 1] || null;
   const small = big ? (state.cycleSmallCycles || []).find((item) => item.id === big.currentSmallCycleId) || big.smallCycles?.find((item) => item.id === big.currentSmallCycleId) : null;
   const slots = small?.slots || [];
-  const currentIndex = Math.max(0, Number(big?.currentSlot ?? 0));
-  const current = slots[currentIndex] || slots[0];
-  const next = slots[currentIndex + 1] || null;
+  const rawIndex = Number(big?.currentSlot ?? -1);
+  const hasSmallCycle = Boolean(small?.id && slots.length);
+  const hasCurrent = hasSmallCycle && rawIndex >= -1 && rawIndex < slots.length;
+  const displayIndex = rawIndex < 0 ? 0 : rawIndex;
+  const current = hasCurrent ? slots[displayIndex] || null : null;
+  const next = current && rawIndex >= 0 ? slots[rawIndex + 1] || null : null;
   const relationship = current ? relationshipById(block, current.relationshipId) : null;
   const nextRelationship = next ? relationshipById(block, next.relationshipId) : null;
   const slotAttrs = current ? " data-id=\"" + esc(block.id) + "\" data-relationship-id=\"" + esc(current.relationshipId) + "\" data-small-cycle-id=\"" + esc(small.id) + "\"" : "";
   const skipAllowed = relationship?.config?.allowSkip === true;
-  const coverage = big ? ((big.appearanceCoverage || []).length + "/" + (big.participantRelationshipIds || []).length + " appeared · " + (big.completionCoverage || []).length + "/" + (big.participantRelationshipIds || []).length + " completed") : "No Big Cycle yet";
-  return "<article class=\"samt-card samt-runtime-card\"><div class=\"samt-card-head\"><div><h3>Cycle runtime</h3><small>" + esc(titleCase(block.config?.generationMode || big?.generationMode || "simple_ordered")) + " · Small Cycle " + esc(String(small?.smallCycleNumber || 0)) + " · Big Cycle " + esc(String(all.indexOf(big) + 1 || 1)) + "</small></div><div class=\"samt-row-actions\">" + button("generate-small-cycle", "Generate", " data-id=\"" + esc(block.id) + "\"") + "</div></div><div class=\"samt-detail-grid\"><div><span class=\"samt-eyebrow\">Current</span><h2>" + esc(relationship ? relationshipName(state, relationship) : "No slot") + "</h2><p class=\"samt-muted\">slot " + (current ? Number(big?.currentSlot ?? 0) + 1 : "—") + " of " + slots.length + "</p></div><div><span class=\"samt-eyebrow\">Next</span><h2>" + esc(next ? relationshipName(state, nextRelationship) : "Generate next") + "</h2><p class=\"samt-muted\">" + esc(coverage) + "</p></div></div><div class=\"samt-card-actions\">" + (current ? button("resolve-cycle-slot", "Complete / Log", slotAttrs + " data-outcome=\"completed\"", "primary") : "") + (current && skipAllowed ? button("resolve-cycle-slot", "Skip", slotAttrs + " data-outcome=\"skipped\"") : "") + (current ? button("resolve-cycle-slot", "Defer", slotAttrs + " data-outcome=\"deferred\"") : "") + button("advance-cycle", "Next", " data-id=\"" + esc(block.id) + "\"") + "</div></article>";
+  const total = big?.participantRelationshipIds?.length || 0;
+  const coverage = big ? ((big.appearanceCoverage || []).length + "/" + total + " appeared · " + (big.completionCoverage || []).length + "/" + total + " completed") : "No Big Cycle yet";
+  const needsGeneration = !hasSmallCycle || rawIndex >= slots.length;
+  const canAdvance = Boolean(current && next && rawIndex >= 0);
+  return "<article class=\"samt-card samt-runtime-card\"><div class=\"samt-card-head\"><div><h3>Cycle runtime</h3><small>" + esc(titleCase(block.config?.generationMode || big?.generationMode || "simple_ordered")) + " · Small Cycle " + esc(String(small?.smallCycleNumber || 0)) + " · Big Cycle " + esc(String(all.indexOf(big) + 1 || 1)) + "</small></div><div class=\"samt-row-actions\">" + (needsGeneration ? button("generate-small-cycle", "Generate next Small Cycle", " data-id=\"" + esc(block.id) + "\"") : "") + "</div></div><div class=\"samt-detail-grid\"><div><span class=\"samt-eyebrow\">Current</span><h2>" + esc(relationship ? relationshipName(state, relationship) : needsGeneration ? "Generate next" : "No slot") + "</h2><p class=\"samt-muted\">" + (current ? "slot " + (displayIndex + 1) + " of " + slots.length : "No generated slot is available") + "</p></div><div><span class=\"samt-eyebrow\">Next</span><h2>" + esc(next ? relationshipName(state, nextRelationship) : needsGeneration ? "Generate next Small Cycle" : "End of Small Cycle") + "</h2><p class=\"samt-muted\">" + esc(coverage) + "</p></div></div><div class=\"samt-card-actions\">" + (current ? button("resolve-cycle-slot", "Complete / Log", slotAttrs + " data-outcome=\"completed\"", "primary") : "") + (current && skipAllowed ? button("resolve-cycle-slot", "Skip", slotAttrs + " data-outcome=\"skipped\" data-require-reason=\"true\"") : "") + (current ? button("resolve-cycle-slot", "Defer", slotAttrs + " data-outcome=\"deferred\"") + button("resolve-cycle-slot", "Unavailable", slotAttrs + " data-outcome=\"unavailable\"") : "") + (canAdvance ? button("advance-cycle", "Next", " data-id=\"" + esc(block.id) + "\"") : needsGeneration ? button("generate-small-cycle", "Generate next Small Cycle", " data-id=\"" + esc(block.id) + "\"") : "") + "</div></article>";
 }
 function actionListRuntime(state, block) {
   const ids = new Set((block.relationships || []).map((relationship) => relationship.id));
