@@ -12,6 +12,22 @@ function resultValue(result, key) {
   return result?.[key] == null ? "—" : String(result[key]);
 }
 
+function resultTagMarkup(resultTag) {
+  if (!resultTag) return "";
+  const fields = (resultTag.fields || []).map((item) => {
+    const analysis = item.analysis || {};
+    const value = analysis.error || analysis.latest ?? analysis.value ?? analysis.numericAverage ?? "—";
+    const unit = analysis.unitSymbol ? " " + analysis.unitSymbol : "";
+    return '<div class="samt-list-row"><div><strong>' + esc(item.actionName + " · " + item.label) + '</strong><small>' + esc(item.type) + ' · ' + esc(String(analysis.count || 0)) + ' value(s)</small></div><span class="samt-metric">' + esc(String(value)) + esc(unit) + '</span></div>';
+  }).join("");
+  const groups = (resultTag.groups || []).map((group) => {
+    const analysis = group.analysis || {};
+    if (analysis.error) return '<p class="samt-form-error">' + esc(analysis.error) + '</p>';
+    return '<p class="samt-muted">Compatible Measurement group · ' + esc(String(analysis.count || 0)) + ' values · average ' + esc(String(analysis.average ?? "—")) + (analysis.unitSymbol ? " " + esc(analysis.unitSymbol) : "") + '</p>';
+  }).join("");
+  return '<article class="samt-card"><div class="samt-card-head"><h2>Result Tag analysis</h2><span class="samt-badge">' + esc(String(resultTag.count || 0)) + ' values</span></div>' + (resultTag.incompatibleGroups ? '<p class="samt-muted">Incompatible Measurement dimensions are shown separately; no raw cross-unit average was calculated.</p>' : "") + (groups || "") + '<div class="samt-list">' + (fields || '<p class="samt-empty">No values match this Result Tag.</p>') + '</div></article>';
+}
+
 export function renderAnalysisView({ model = {}, state = {}, filters = {} } = {}) {
   const fields = resultFields(state);
   const resultTags = (state.tags || []).filter((tag) => ["result", "both"].includes(tag.scope));
@@ -23,6 +39,8 @@ export function renderAnalysisView({ model = {}, state = {}, filters = {} } = {}
   const attribution = filters.attribution || (filters.blockId ? (filters.inclusive === "false" ? "direct" : "inclusive") : "global");
   const targetProgress = target ? state.__targetProgress?.[target.id] : null;
   const result = model.result;
+  const resultTag = model.resultTag;
+  const resultTagMarkupContent = resultTagMarkup(resultTag);
   const resultMarkup = result ? '<article class="samt-card"><div class="samt-card-head"><h2>Result analysis</h2><span class="samt-badge">' + esc(result.type || "result") + '</span></div>' + (result.error ? '<p class="samt-form-error">' + esc(result.error) + '</p>' : '<dl class="samt-definition-list"><div><dt>Count</dt><dd>' + resultValue(result, "count") + '</dd></div><div><dt>Latest / value</dt><dd>' + esc(resultValue(result, "latest") !== "—" ? resultValue(result, "latest") : resultValue(result, "value")) + (result.unitSymbol ? " " + esc(result.unitSymbol) : "") + '</dd></div><div><dt>Average</dt><dd>' + esc(resultValue(result, "average") !== "—" ? resultValue(result, "average") : resultValue(result, "numericAverage")) + (result.unitSymbol ? " " + esc(result.unitSymbol) : "") + '</dd></div><div><dt>Range</dt><dd>' + esc(resultValue(result, "min")) + ' → ' + esc(resultValue(result, "max")) + (result.unitSymbol ? " " + esc(result.unitSymbol) : "") + '</dd></div></dl>') + '</article>' : "";
   const periodMarkup = target ? '<article class="samt-card"><div class="samt-card-head"><h2>Target periods</h2><span class="samt-count">' + periods.length + '</span></div>' + (targetProgress ? '<p class="samt-muted">Current: ' + esc(String(targetProgress.actual ?? "—")) + ' / ' + esc(String(targetProgress.targetValue ?? target.config?.targetValue ?? "—")) + ' · ' + esc(statusLabel(targetProgress.status || "not_started")) + '</p>' : "") + '<div class="samt-table-wrap"><table class="samt-table"><thead><tr><th>Bounds</th><th>Status</th><th>Target snapshot</th><th>Actual</th></tr></thead><tbody>' + (periods.map((period) => '<tr><td>' + esc(fmtDateTime(period.start)) + ' → ' + esc(fmtDateTime(period.end)) + '</td><td>' + esc(statusLabel(period.status || period.evaluation?.status || "closed")) + '</td><td>' + esc(String(period.snapshot?.targetValue ?? target.config?.targetValue ?? "—")) + '</td><td>' + esc(String(period.evaluation?.actual ?? period.evaluation?.value ?? "—")) + '</td></tr>').join("") || '<tr><td colspan="4" class="samt-empty">No closed Target periods recorded.</td></tr>') + '</tbody></table></div></article>' : "";
   return '<section class="samt-page" aria-labelledby="analysis-title"><header class="samt-page-head"><div><p class="samt-eyebrow">Derived read model · factual records</p><h1 id="analysis-title">Analysis</h1><p class="samt-muted">Use Direct, Inclusive Unique, or Descendant attribution explicitly. Measurement analysis is normalised to a compatible Unit and never combines incompatible dimensions.</p></div></header>' +
@@ -42,7 +60,7 @@ export function renderAnalysisView({ model = {}, state = {}, filters = {} } = {}
       '<label>From<input class="samt-input" name="from" type="date" value="' + esc(filters.from || "") + '"></label><label>To<input class="samt-input" name="to" type="date" value="' + esc(filters.to || "") + '"></label>' +
     '</div><div class="samt-form-actions"><button class="samt-button primary" type="submit">Apply Filters</button><a class="samt-button ghost" href="#/analysis">Reset</a></div></form>' +
     '<div class="samt-stat-grid"><article class="samt-card"><span class="samt-eyebrow">Scope</span><strong class="samt-stat-value">' + esc(model.scope || "GLOBAL_UNIQUE") + '</strong><small>' + (model.logCount || 0) + ' factual log' + (model.logCount === 1 ? "" : "s") + '</small></article><article class="samt-card"><span class="samt-eyebrow">Unique time</span><strong class="samt-stat-value">' + fmtMinutes(model.totalMinutes || 0) + '</strong><small>One real-world event remains one log</small></article><article class="samt-card"><span class="samt-eyebrow">Unique quantity</span><strong class="samt-stat-value">' + esc(String((model.logs || []).reduce((sum, log) => sum + Number(log.quantity || 0), 0))) + '</strong><small>Factual quantity across logs</small></article></div>' +
-    resultMarkup + periodMarkup +
+    resultMarkup + resultTagMarkupContent + periodMarkup +
     '<article class="samt-card"><div class="samt-card-head"><h2>Target library</h2><span class="samt-count">' + targetBlocks.length + '</span></div><div class="samt-list">' + (targetBlocks.map((item) => '<div class="samt-list-row"><div><a href="#/blocks/' + encodeURIComponent(item.id) + '"><strong>' + esc(item.name) + '</strong></a><small>' + esc(item.config?.period || "all_time") + ' · ' + esc(statusLabel(state.__targetProgress?.[item.id]?.status || "not_started")) + '</small></div><div class="samt-metric"><b>' + esc(String(state.__targetProgress?.[item.id]?.actual ?? "—")) + '</b><span>/ ' + esc(String(state.__targetProgress?.[item.id]?.targetValue ?? item.config?.targetValue ?? "—")) + '</span></div></div>').join("") || '<p class="samt-empty">No Target Blocks yet.</p>') + '</div></article>' +
     '<article class="samt-card"><div class="samt-card-head"><h2>Logs in scope</h2><span class="samt-count">' + (model.logs || []).length + '</span></div><div class="samt-list">' + ((model.logs || []).slice(0, 50).map((log) => '<div class="samt-list-row"><div><strong>' + esc(log.actionSnapshot?.name || log.actionId) + '</strong><small>' + esc(fmtDateTime(log.eventAt)) + ' · ' + esc(log.contextRefs?.map((reference) => reference.blockId || reference.runId || reference.occurrenceId).filter(Boolean).join(", ") || "No context") + '</small></div><div class="samt-metric"><b>' + fmtMinutes(log.durationMinutes) + '</b>' + (log.quantity != null ? '<span>' + esc(String(log.quantity)) + ' qty</span>' : "") + '</div></div>').join("") || '<p class="samt-empty">No logs match these filters.</p>') + '</div></article></section>';
 }
