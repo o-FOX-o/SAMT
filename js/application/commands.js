@@ -716,6 +716,14 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         const { index, item: run } = requireStateItem(state.runs, runId, "Run");
         const block = state.blocks.find((candidate) => candidate.id === run.blockId);
         if (!block || block.type !== "workflow") throw new ValidationError("Run is not a Workflow Run.");
+        if (stateName === "COMPLETED") {
+          const step = (run.steps || []).find((candidate) => candidate.id === stepId);
+          const relationship = step ? runRelationships(run, block).find((candidate) => candidate.id === (step.relationshipId || step.id)) : null;
+          const action = relationship?.kind === "action" ? state.actions.find((candidate) => candidate.id === relationship.refId) : null;
+          if (action && relationship.config?.manualCompletion !== true && !isActionCompletionAchieved({ action, log: aggregatedRunLog(state, run, relationship.id, action) })) {
+            throw new ValidationError("Log enough of this Action to satisfy its completion requirement, or enable manual completion for the relationship.");
+          }
+        }
         const next = transitionWorkflowStep({ run, stepId, state: stateName, reason, expectedUnblockAt: options.expectedUnblockAt || null, now: now() });
         const evaluated = evaluateRun(next, block, false);
         state.runs[index] = applyRunEvaluation(next, evaluated);
