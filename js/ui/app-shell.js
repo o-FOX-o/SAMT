@@ -497,7 +497,16 @@ export function mountSamtApp(engine, documentRef = globalThis.document) {
       const stateName = action === "start-workflow-step" ? "IN_PROGRESS" : action === "complete-workflow-step" ? "COMPLETED" : action === "skip-workflow-step" ? "SKIPPED" : action === "excuse-workflow-step" ? "EXCUSED" : action === "na-workflow-step" ? "NOT_APPLICABLE" : action === "block-workflow-step" ? "BLOCKED" : "AVAILABLE";
       const reason = ["SKIPPED", "EXCUSED", "NOT_APPLICABLE", "BLOCKED"].includes(stateName) ? (windowRef?.prompt?.(stateName === "BLOCKED" ? "Block reason" : "Reason (optional)", "") || "") : "";
       if (stateName === "BLOCKED" && !reason) return showFlash("A blocked step needs a reason.", "error");
-      return runCommand(() => engine.commands.updateWorkflowStep(target.dataset.runId, target.dataset.stepId, stateName, reason), "Workflow step updated.");
+      let expectedUnblockAt = null;
+      if (stateName === "BLOCKED") {
+        const entered = windowRef?.prompt?.("Expected unblock date/time (optional)", "");
+        if (entered) {
+          const parsed = new Date(entered);
+          if (!Number.isFinite(parsed.getTime())) return showFlash("Enter a valid expected unblock date/time.", "error");
+          expectedUnblockAt = parsed.toISOString();
+        }
+      }
+      return runCommand(() => engine.commands.updateWorkflowStep(target.dataset.runId, target.dataset.stepId, stateName, reason, { expectedUnblockAt }), "Workflow step updated.");
     }
     if (action === "return-workflow-step") return runCommand(() => engine.commands.returnToWorkflowStep(target.dataset.runId, target.dataset.stepId), "Workflow returned to that step."); if (action === "release-workflow-step") return runCommand(() => engine.commands.releaseWorkflowStep(target.dataset.runId, target.dataset.stepId), "Workflow step released.");
     if (action === "add-project-milestone") return openProjectMilestoneModal(target.dataset.runId);
