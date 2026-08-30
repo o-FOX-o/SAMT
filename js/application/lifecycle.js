@@ -1,4 +1,4 @@
-import { calculatePeriodBounds, addCalendarDays, partsInTimeZone } from "../shared/dates.js";
+import { calculatePeriodBounds, addCalendarDays, partsInTimeZone, zonedDateTime } from "../shared/dates.js";
 import { createPeriod } from "../domain/periods.js";
 import { createOccurrence, resolveOccurrenceStatus } from "../domain/occurrences.js";
 import { occurrenceIdentity, isScheduleDue } from "../domain/scheduling.js";
@@ -18,8 +18,8 @@ function periodIdentity(ownerId, bounds, style) {
 
 function ensurePeriod(state, owner, config, now, timezone, created) {
   const period = config.period || "day";
-  if (["session", "all_time"].includes(period) || style === "rolling") return null;
   const style = config.periodStyle || "calendar";
+  if (["session", "all_time"].includes(period) || style === "rolling") return null;
   const bounds = calculatePeriodBounds({
     period,
     style,
@@ -122,7 +122,9 @@ function scheduleCandidate({ schedule, relationshipId, existing = [], now, timez
   if (schedule.activeUntil && new Date(now) > new Date(schedule.activeUntil)) return null;
   if (mode === "manual") return null;
   if (mode === "once") {
-    const scheduledAt = schedule.date || (schedule.anchorAt ? localDate(schedule.anchorAt, timezone) : localDate(now, timezone));
+    const scheduledAt = schedule.dateOnly === false && schedule.time
+      ? zonedDateTime({ date: String(schedule.date || localDate(schedule.anchorAt || now, timezone)).slice(0, 10), time: schedule.time, timezone }).toISOString()
+      : schedule.date || (schedule.anchorAt ? localDate(schedule.anchorAt, timezone) : localDate(now, timezone));
     if (existing.some((occurrence) => occurrence.relationshipId === relationshipId && occurrence.scheduledAt === scheduledAt)) return null;
     return { scheduledAt, sequence: schedule.sequence || 0 };
   }
@@ -153,7 +155,7 @@ function scheduleCandidate({ schedule, relationshipId, existing = [], now, timez
   }
   if (!isScheduleDue({ schedule, at: now, timezone })) return null;
   const scheduledAt = schedule.dateOnly === false
-    ? (schedule.time ? `${localDate(now, timezone)}T${schedule.time}` : now.toISOString())
+    ? (schedule.time ? zonedDateTime({ date: localDate(now, timezone), time: schedule.time, timezone }).toISOString() : now.toISOString())
     : localDate(now, timezone);
   if (existing.some((occurrence) => occurrence.relationshipId === relationshipId && occurrence.scheduledAt === scheduledAt)) return null;
   return { scheduledAt, sequence: schedule.sequence || 0 };
