@@ -426,12 +426,37 @@ export function mountSamtApp(engine, documentRef = globalThis.document) {
     if (!block) return;
     openForm({
       title: "Activate " + block.name,
-      content: "<form class=\"samt-form\" data-form=\"activation\" data-block-id=\"" + esc(blockId) + "\"><p class=\"samt-muted\">An Activation controls when this Block creates Runs or Action List occurrences. It is separate from the definition status.</p><div class=\"samt-form-grid\"><label>Mode<select class=\"samt-input\" name=\"mode\"><option value=\"manual\">Manual</option><option value=\"run_now\">Run now</option><option value=\"schedule\">Schedule</option></select></label><label>Run label<input class=\"samt-input\" name=\"label\" placeholder=\"Optional context label\"></label></div><fieldset><legend>Schedule (for Schedule mode)</legend><div class=\"samt-form-grid\"><label>Recurrence<select class=\"samt-input\" name=\"recurrenceMode\"><option value=\"once\">Once</option><option value=\"interval\">Interval</option><option value=\"calendar\">Calendar</option></select></label><label>Date / anchor<input class=\"samt-input\" name=\"date\" type=\"date\"></label><label>Every X<input class=\"samt-input\" name=\"every\" type=\"number\" min=\"1\" step=\"1\" value=\"1\"></label><label>Unit<select class=\"samt-input\" name=\"unit\"><option value=\"hours\">Hours</option><option value=\"days\">Days</option><option value=\"weeks\">Weeks</option><option value=\"months\">Months</option></select></label><label>Time (optional)<input class=\"samt-input\" name=\"time\" type=\"time\"></label><label>Active from<input class=\"samt-input\" name=\"activeFrom\" type=\"datetime-local\"></label><label>Active until<input class=\"samt-input\" name=\"activeUntil\" type=\"datetime-local\"></label></div></fieldset><fieldset><legend>End Activation (optional)</legend><div class=\"samt-form-grid\"><label>End at<input class=\"samt-input\" name=\"endAt\" type=\"datetime-local\"></label><label>After Runs<input class=\"samt-input\" name=\"endAfterRuns\" type=\"number\" min=\"1\" step=\"1\"></label></div></fieldset><p class=\"samt-form-error\" data-form-error role=\"alert\"></p><button class=\"samt-button primary\" type=\"submit\">Save Activation</button></form>",
+      content: '<form class="samt-form" data-form="activation" data-block-id="' + esc(blockId) + '">' +
+        '<p class="samt-muted">An Activation controls when this Block creates Runs or Action List occurrences. It is separate from the definition status.</p>' +
+        '<div class="samt-form-grid"><label>Mode<select class="samt-input" name="mode"><option value="manual">Manual</option><option value="run_now">Run now</option><option value="schedule">Schedule</option></select></label><label>Run label<input class="samt-input" name="label" placeholder="Optional context label"></label></div>' +
+        '<fieldset><legend>Schedule (for Schedule mode)</legend><div class="samt-form-grid"><label>Recurrence<select class="samt-input" name="recurrenceMode"><option value="once">Once</option><option value="interval">Interval</option><option value="calendar">Calendar</option></select></label><label>Start date<input class="samt-input" name="date" type="date"></label><label>Fixed anchor time<input class="samt-input" name="anchorAt" type="datetime-local"></label><label>Every X<input class="samt-input" name="every" type="number" min="1" step="1" value="1"></label><label>Unit<select class="samt-input" name="unit"><option value="hours">Hours</option><option value="days">Days</option><option value="weeks">Weeks</option><option value="months">Months</option></select></label><label>Interval anchor<select class="samt-input" name="anchor"><option value="fixed">Fixed schedule</option><option value="previous_occurrence">Previous Run</option><option value="previous_completion">Previous completion</option></select></label><label>Calendar kind<select class="samt-input" name="calendarKind"><option value="daily">Daily</option><option value="weekdays">Selected weekdays</option><option value="monthly">Monthly</option><option value="yearly">Yearly</option><option value="dates">Specific dates</option></select></label><label>Weekdays<select class="samt-input" name="weekdays" multiple size="3"><option value="0">Sunday</option><option value="1">Monday</option><option value="2">Tuesday</option><option value="3">Wednesday</option><option value="4">Thursday</option><option value="5">Friday</option><option value="6">Saturday</option></select></label><label>Month (yearly)<input class="samt-input" name="month" type="number" min="1" max="12" value="1"></label><label>Day of month<input class="samt-input" name="dayOfMonth" type="number" min="1" max="31" value="1"></label><label>Specific dates<textarea class="samt-input" name="dates" rows="2" placeholder="YYYY-MM-DD, one per line"></textarea></label><label>Time (optional)<input class="samt-input" name="time" type="time"></label><label class="samt-check"><input type="checkbox" name="dateOnly" checked> Date-only runtime</label><label>Calendar starts<input class="samt-input" name="startDate" type="date"></label><label>Calendar ends<input class="samt-input" name="endDate" type="date"></label><label>Active from<input class="samt-input" name="activeFrom" type="datetime-local"></label><label>Active until<input class="samt-input" name="activeUntil" type="datetime-local"></label></div></fieldset>' +
+        '<fieldset><legend>End Activation (optional)</legend><div class="samt-form-grid"><label>End at<input class="samt-input" name="endAt" type="datetime-local"></label><label>After Runs<input class="samt-input" name="endAfterRuns" type="number" min="1" step="1"></label></div></fieldset>' +
+        '<p class="samt-form-error" data-form-error role="alert"></p><button class="samt-button primary" type="submit">Save Activation</button></form>',
+
       onSubmit: (form) => {
         const data = new FormData(form);
         const mode = data.get("mode") || "manual";
         const iso = (value) => value ? new Date(value).toISOString() : null;
-        const recurrence = mode === "schedule" ? { mode: data.get("recurrenceMode") || "once", date: data.get("date") || null, every: Number(data.get("every") || 1), unit: data.get("unit") || "days", anchor: "fixed", anchorAt: iso(data.get("date")) || new Date().toISOString(), time: data.get("time") || null, activeFrom: iso(data.get("activeFrom")), activeUntil: iso(data.get("activeUntil")) } : null;
+        const recurrence = mode === "schedule" ? {
+          mode: data.get("recurrenceMode") || "once",
+          date: data.get("date") || null,
+          every: Number(data.get("every") || 1),
+          unit: data.get("unit") || "days",
+          anchor: data.get("anchor") || "fixed",
+          anchorAt: iso(data.get("anchorAt") || data.get("date")),
+          calendarKind: data.get("calendarKind") || "daily",
+          weekdays: data.getAll("weekdays").map(Number),
+          month: Number(data.get("month") || 1),
+          dayOfMonth: Number(data.get("dayOfMonth") || 1),
+          day: Number(data.get("dayOfMonth") || 1),
+          dates: String(data.get("dates") || "").split(/\s*[;,]\s*|\n/).map((value) => value.trim()).filter(Boolean),
+          time: data.get("time") || null,
+          dateOnly: data.get("dateOnly") === "on",
+          startDate: data.get("startDate") || null,
+          endDate: data.get("endDate") || null,
+          activeFrom: iso(data.get("activeFrom")),
+          activeUntil: iso(data.get("activeUntil"))
+        } : null;
         engine.commands.createActivation({ blockId, mode, label: data.get("label") || "", recurrence, endAt: iso(data.get("endAt")), endAfterRuns: data.get("endAfterRuns") === "" ? null : Number(data.get("endAfterRuns")) });
         flash = { message: "Activation saved.", level: "success" };
       }
