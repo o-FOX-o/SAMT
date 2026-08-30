@@ -28,17 +28,19 @@ export function createTargetConfig({ mode = "accumulation", metric = "time", tar
   return { mode, metric, targetValue: typeof targetValue === "string" ? targetValue : finiteNumber(targetValue), targetOptionId, sourceActionIds: [...new Set(sourceActionIds)], sourceBlockId, descendantBlockIds: [...new Set(descendantBlockIds)], sourceResultFieldId, sourceResultTagId, aggregation, comparison, unitId, contributionScope: scope, requiredChildTargetIds: [...new Set(requiredChildTargetIds)], period, periodStyle, rollingWindowDays: rollingWindowDays == null ? null : Number(rollingWindowDays), customStart: customStart ? new Date(customStart).toISOString() : null, customEnd: customEnd ? new Date(customEnd).toISOString() : null, timezone, weekStartsOn };
 }
 
-export function filterTargetLogs({ logs = [], period = null, actionIds = [], blockId = null, blocks = [], contributionScope = "direct", descendantBlockIds = [] } = {}) {
+export function filterTargetLogs({ logs = [], period = null, actionIds = [], blockId = null, blocks = [], contributionScope = "direct", descendantBlockIds = [], targetId = null, targetRelationships = [] } = {}) {
   const ids = new Set(actionIds); const inclusive = ["inclusive", "inclusive_unique", "inclusive_descendants"].includes(contributionScope);
   const derivedDescendants = blockId && inclusive && blocks.length ? getDescendantBlockIds(blockId, blocks) : [];
   const blockIds = blockId && inclusive ? new Set([blockId, ...descendantBlockIds, ...derivedDescendants]) : blockId ? new Set([blockId]) : null;
+  const excludedRelationshipIds = new Set((targetRelationships || []).filter((relationship) => relationship.config?.includeInTarget === false).map((relationship) => relationship.id));
   const referencesBlock = (log) => (log.contextRefs || []).some((reference) => blockIds?.has(reference.blockId || reference.blockIdRef || reference));
-  return aggregateLogsUnique(logs, (log) => (!period || isInPeriod(log.eventAt, period)) && (!ids.size || ids.has(log.actionId)) && (!blockIds || referencesBlock(log)));
+  const excludesTargetRelationship = (log) => targetId && (log.contextRefs || []).some((reference) => reference.blockId === targetId && excludedRelationshipIds.has(reference.relationshipId));
+  return aggregateLogsUnique(logs, (log) => (!period || isInPeriod(log.eventAt, period)) && (!ids.size || ids.has(log.actionId)) && (!blockIds || referencesBlock(log)) && !excludesTargetRelationship(log));
 }
 
 export function calculateTargetProgress({ target, logs = [], period = null, actions = [], blocks = [], resultField = null, units = [], childResults = [] } = {}) {
   let config = target?.config || target; if (!config) throw new InvalidTargetError("Target configuration is missing.");
-  const selected = filterTargetLogs({ logs, period, actionIds: config.sourceActionIds || [], blockId: config.sourceBlockId || null, blocks, contributionScope: config.contributionScope || "direct", descendantBlockIds: config.descendantBlockIds || [] });
+  const selected = filterTargetLogs({ logs, period, actionIds: config.sourceActionIds || [], blockId: config.sourceBlockId || null, blocks, contributionScope: config.contributionScope || "direct", descendantBlockIds: config.descendantBlockIds || [], targetId: target?.id || null, targetRelationships: target?.relationships || [] });
   let actual = 0; let analysis = null;
   if (config.mode === "accumulation") {
     if (config.metric === "time") actual = totalDuration(selected);
