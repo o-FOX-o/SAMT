@@ -22,7 +22,23 @@ export function isScheduleDue({ schedule = {}, at, timezone = "UTC" } = {}) {
     const actualParts = partsInTimeZone(at, timezone);
     return Number(timeMatch[1]) === actualParts.hour && Number(timeMatch[2]) === actualParts.minute;
   }
-  if (mode === "calendar") { if (schedule.startDate && date < schedule.startDate || schedule.endDate && date > schedule.endDate) return false; if (schedule.calendarKind === "daily") return true; if (schedule.calendarKind === "dates") return (schedule.dates || []).includes(date); if (schedule.calendarKind === "weekdays") { const p = partsInTimeZone(at, timezone); return (schedule.weekdays || []).includes(new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay()); } if (schedule.calendarKind === "monthly") return Number(schedule.dayOfMonth || schedule.day) === partsInTimeZone(at, timezone).day; if (schedule.calendarKind === "yearly") { const p = partsInTimeZone(at, timezone); return Number(schedule.month) === p.month && Number(schedule.dayOfMonth || schedule.day) === p.day; } return false; }
+  if (mode === "calendar") {
+    if (schedule.startDate && date < schedule.startDate || schedule.endDate && date > schedule.endDate) return false;
+    let calendarDue = false;
+    if (schedule.calendarKind === "daily") calendarDue = true;
+    else if (schedule.calendarKind === "dates") calendarDue = (schedule.dates || []).includes(date);
+    else if (schedule.calendarKind === "weekdays") {
+      const p = partsInTimeZone(at, timezone);
+      calendarDue = (schedule.weekdays || []).includes(new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay());
+    } else if (schedule.calendarKind === "monthly") {
+      calendarDue = Number(schedule.dayOfMonth || schedule.day) === partsInTimeZone(at, timezone).day;
+    } else if (schedule.calendarKind === "yearly") {
+      const p = partsInTimeZone(at, timezone);
+      calendarDue = Number(schedule.month) === p.month && Number(schedule.dayOfMonth || schedule.day) === p.day;
+    }
+    if (!calendarDue) return false;
+    return !schedule.time || schedule.dateOnly !== false || timeMatches(schedule.time, at, timezone);
+  }
   if (mode === "interval") {
     if (!schedule.anchorAt) return false;
     const start = new Date(schedule.anchorAt); const current = new Date(at); if (!Number.isFinite(start.getTime()) || current < start) return false;
@@ -36,6 +52,13 @@ export function isScheduleDue({ schedule = {}, at, timezone = "UTC" } = {}) {
 }
 
 function localDate(value, timezone) { const p = partsInTimeZone(value, timezone); return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`; }
+
+function timeMatches(time, value, timezone) {
+  const match = String(time || "").match(/^(\\d{2}):(\\d{2})/);
+  if (!match) return true;
+  const parts = partsInTimeZone(value, timezone);
+  return Number(match[1]) === parts.hour && Number(match[2]) === parts.minute;
+}
 
 export function nextScheduledDate({ from, schedule = {}, timezone = "UTC" } = {}) {
   const unit = schedule.unit || "days"; const step = unit === "hours" ? 3600000 : 86400000;
