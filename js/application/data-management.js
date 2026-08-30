@@ -2,7 +2,7 @@ import { ConflictError, NotFoundError, ValidationError } from "../shared/errors.
 import { clone, normalizedKey } from "../shared/validation.js";
 import { validateUnits } from "../domain/units.js";
 import { validateTaxonomy } from "../domain/taxonomy.js";
-import { validateAction, versionResultFields } from "../domain/actions.js";
+import { validateAction, versionResultFields, isActionCompletionAchieved } from "../domain/actions.js";
 import { validateResultFields } from "../domain/results.js";
 import { validateBlockGraph } from "../domain/relationships.js";
 import { resolveOccurrenceStatus } from "../domain/occurrences.js";
@@ -301,15 +301,90 @@ function filteredIds(state, type, options) {
   return index.records.filter((record) => record.type === type).map((record) => record.id);
 }
 
-function removeLogs(state, ids, now = new Date()) {
-  const removed = new Set(ids);
-  const affected = (state.occurrences || []).filter((occurrence) => (occurrence.logIds || []).some((id) => removed.has(id)));
+function relationshipForRun(run, relationshipId) {
+  return (run.snapshot?.relationships || run.snapshot?.block?.relationships || []).find((relationship) => relationship.id === relationshipId) || null;
+}
+
+function actionLogsForRun(state, runId, relationshipId) {
+  return (state.actionLogs || []).filter((log) => (log.contextRefs || []).some((reference) =>
+    reference.runId === runId && (!relationshipId || reference.relationshipId === relationshipId)
+  ));
+}
+
+function refreshRunItemsAfterLogRemoval(state, run, items, removed, stamp) {
+  let changed = false;
+  const nextItems = (items || []).map((item) => {
+    const beforeLogIds = item.logIds || [];
+    if (!beforeLogIds.some((id) => removed.has(id))) return item;
+    changed = true;
+    const logIds = beforeLogIds.filter((id) => !removed.has(id));
+    const completedLogIds = (item.completedLogIds || []).filter((id) => !removed.has(id));
+    let next = { ...item, logIds, completedLogIds, updatedAt: stamp };
+    const relationshipId = item.relationshipId || item.id;
+    const relationship = relationshipForRun(run, relationshipId);
+    const action = relationship?.kind === "action"
+      ? (state.actions || []).find((candidate) => candidate.id === relationship.refId)
+      : null;
+    if (next.state === "COMPLETED" && action && relationship?.config?.manualCompletion !== true) {
+      const logs = actionLogsForRun(state, run.id, relationshipId);
+      const aggregate = {
+        quantity: logs.reduce((sum, log) => sum + Number(log.quantity || 0), 0),
+        durationMinutes: logs.reduce((sum, log) => sum + Number(log.durationMinutes || 0), 0),
+        logs
+      };
+      if (!isActionCompletionAchieved({ action, log: aggregate })) {
+        next = { ...next, state: logs.length ? "IN_PROGRESS" : "AVAILABLE", completedLogIds: [] };
+      }
+    }
+    return next;
+  });
+  return { items: nextItems, changed };
+}
+
+function refreshRunsAfterLogRemoval(state, removed, now = new Date()) {
+  const stamp = new Date(now).toISOString();
+  const affectedRuns = [];
+  for (const run of state.runs || []) {
+    const sourceChildren = Array.isArray(run.children) ? run.children : run.runtime?.children || null;
+    const sourceSteps = Array.isArray(run.steps) ? run.steps : run.runtime?.steps || null;
+    const childResult = refreshRunItemsAfterLogRemoval(state, run, sourceChildren, removed, stamp);
+    const stepResult = refreshRunItemsAfterLogRemoval(state, run, sourceSteps, removed, stamp);
+    if (!childResult.changed && !stepResult.changed) continue;
+    const children = childResult.items;
+    const steps = stepResult.items;
+    if (Array.isArray(run.children) || childResult.changed) run.children = children;
+    if (Array.isArray(run.steps) || stepResult.changed) run.steps = steps;
+    run.runtime = {
+      ...(run.runtime || {}),
+      ...(childResult.changed ? { children: clone(children) } : {}),
+      ...(stepResult.changed ? { steps: clone(steps) } : {}),
+      updatedAt: stamp
+    };
+    const items = children || steps || [];
+    const required = items.filter((item) => item.required !== false);
+    const satisfied = required.every((item) => ["COMPLETED", "EXCUSED", "NOT_APPLICABLE"].includes(item.state));
+    if (!satisfied && ["COMPLETED", "READY_TO_FINISH"].includes(run.status)) {
+      run.status = items.some((item) => ["IN_PROGRESS", "COMPLETED", "EXCUSED", "NOT_APPLICABLE"].includes(item.state))
+        ? "IN_PROGRESS"
+        : "NOT_STARTED";
+      run.finishedAt = null;
+    }
+    run.updatedAt = stamp;
+    affectedRuns.push(run.id);
+  }
+  return affectedRuns;
+}
+
+export function removeActionLogsInState(state, ids, now = new Date()) {
+  const removed = new Set(ids || []);
+  const affectedOccurrences = (state.occurrences || []).filter((occurrence) => (occurrence.logIds || []).some((id) => removed.has(id)));
   state.actionLogs = (state.actionLogs || []).filter((log) => !removed.has(log.id));
   for (const occurrence of state.occurrences || []) occurrence.logIds = (occurrence.logIds || []).filter((id) => !removed.has(id));
-  for (const occurrence of affected) {
+  const affectedRuns = refreshRunsAfterLogRemoval(state, removed, now);
+  for (const occurrence of affectedOccurrences) {
     if (["skipped", "excused", "not_applicable"].includes(occurrence.status)) continue;
     const relationship = (state.blocks || []).flatMap((block) => block.relationships || []).find((item) => item.id === occurrence.relationshipId);
-    const action = relationship?.kind === "action" ? state.actions.find((item) => item.id === relationship.refId) : null;
+    const action = relationship?.kind === "action" ? (state.actions || []).find((item) => item.id === relationship.refId) : null;
     // Completion is derived from retained logs. Re-open a completed
     // occurrence for an explicit log deletion, while preserving the
     // occurrence's factual snapshot and all other history.
@@ -323,6 +398,11 @@ function removeLogs(state, ids, now = new Date()) {
     });
     occurrence.updatedAt = now.toISOString();
   }
+  return { affectedOccurrences, affectedRuns };
+}
+
+function removeLogs(state, ids, now = new Date()) {
+  return removeActionLogsInState(state, ids, now);
 }
 
 const RUNTIME_TYPES = ["activation", "run", "occurrence", "period", "targetEvaluation", "cycleSmallCycle", "cycleBigCycle", "actionLog", "review", "task", "quickTask", "history", "importHistory"];
