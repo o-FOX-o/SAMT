@@ -329,6 +329,7 @@ export function reconcileTemporalState({
         timezone
       });
       if (!candidate) continue;
+      if (candidate.scheduledAt && new Date(candidate.scheduledAt) > current) continue;
       const run = createActivationRun(state, activation, block, candidate, current);
       if ((state.runs || []).some((existing) => existing.id === run.id || existing.activationId === activation.id && existing.scheduledAt === run.scheduledAt)) continue;
       state.runs.push(run);
