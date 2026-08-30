@@ -67,7 +67,10 @@ export function getHomeViewModel({ state, now = new Date(), timezone = state?.se
   const cycleNow = (safeState.blocks || []).filter((block) => block.type === "cycle" && block.definitionStatus === "ACTIVE").map((cycle) => {
     const big = (safeState.cycleBigCycles || []).filter((item) => item.cycleId === cycle.id && item.status === "open").at(-1);
     const small = big ? (safeState.cycleSmallCycles || []).find((item) => item.id === big.currentSmallCycleId) : null;
-    const generatedItem = small?.slots?.[Number(big?.currentSlot ?? -1)] || small?.slots?.[0] || null;
+    const currentIndex = Number(big?.currentSlot ?? -1);
+    const generatedItem = small && currentIndex >= 0 && currentIndex < (small.slots || []).length
+      ? small.slots[currentIndex]
+      : currentIndex === -1 ? small?.slots?.[0] || null : null;
     return { cycleId: cycle.id, name: cycle.name, position: generatedItem || getCurrentCyclePosition(cycle), generated: Boolean(generatedItem), currentSlot: generatedItem };
   });
   const projects = (safeState.blocks || []).filter((block) => block.type === "project" && block.definitionStatus === "ACTIVE");
