@@ -11,6 +11,7 @@ export function validateActionListSchedule(schedule = {}) {
     if (schedule[key] != null && !Number.isFinite(new Date(schedule[key]).getTime())) throw new InvalidScheduleError(`Schedule ${key} is invalid.`);
   }
   if (schedule.activeFrom && schedule.activeUntil && new Date(schedule.activeFrom) > new Date(schedule.activeUntil)) throw new InvalidScheduleError("Schedule active window is invalid.");
+  if (schedule.time != null && !/^\\d{2}:\\d{2}(?::\\d{2})?$/.test(String(schedule.time))) throw new InvalidScheduleError("Schedule time is invalid.");
   if (schedule.mode === "interval") {
     if (!Number.isInteger(Number(schedule.every)) || Number(schedule.every) < 1) throw new InvalidScheduleError("Interval schedules require a positive interval.");
     if (!["hours", "days", "weeks", "months"].includes(schedule.unit || "days")) throw new InvalidScheduleError("Interval unit is invalid.");
@@ -42,8 +43,11 @@ export function resolveUnfinishedPolicy({ occurrence, policy = "expire", hasProg
 
 export function isScheduleEnded({ schedule = {}, now = new Date(), existingOccurrences = [] } = {}) {
   if (schedule.repeatEnd === "until_date" && schedule.untilDate) {
-    const end = new Date(schedule.untilDate);
-    if (Number.isFinite(end.getTime()) && new Date(now) >= end) return true;
+    const rawEnd = String(schedule.untilDate);
+    const end = /^\\d{4}-\\d{2}-\\d{2}$/.test(rawEnd)
+      ? new Date(rawEnd + "T23:59:59.999Z")
+      : new Date(rawEnd);
+    if (Number.isFinite(end.getTime()) && new Date(now) > end) return true;
   }
   const rows = existingOccurrences.filter((occurrence) => occurrence.relationshipId === schedule.relationshipId || !schedule.relationshipId);
   if (schedule.repeatEnd === "after_occurrences" && Number(schedule.maxOccurrences) > 0 && rows.length >= Number(schedule.maxOccurrences)) return true;
