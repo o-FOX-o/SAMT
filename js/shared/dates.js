@@ -35,11 +35,11 @@ function zonedPartsToUtc(parts, timezone) {
 
 export function zonedDateTime({ date, time = "00:00", timezone = "UTC" } = {}) {
   const dateText = String(date || "");
-  const dateMatch = dateText.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+  const dateMatch = dateText.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   const dateParts = dateMatch
     ? { year: Number(dateMatch[1]), month: Number(dateMatch[2]), day: Number(dateMatch[3]) }
     : partsInTimeZone(date, timezone);
-  const timeMatch = String(time || "00:00").match(/^(\\d{2}):(\\d{2})(?::(\\d{2}))?$/);
+  const timeMatch = String(time || "00:00").match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
   if (!dateParts || !timeMatch || Number(timeMatch[1]) > 23 || Number(timeMatch[2]) > 59 || Number(timeMatch[3] || 0) > 59) {
     throw new InvalidScheduleError("Invalid local date/time.");
   }
