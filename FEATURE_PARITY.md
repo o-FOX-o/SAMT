@@ -4,27 +4,42 @@ The V3 client is the visible application in `index.html`. The former Version
 2 client remains intact only in `life-command-tracker-v2-standalone.html` as a
 compatibility and recovery artifact; it is not mounted by the V3 shell.
 
-| Feature | Status | Notes |
-| --- | --- | --- |
-| Dashboard | MIGRATED + EXPANDED | V3 Home is driven by `getHomeViewModel()` and exposes Now, Due, Avoid, Today, This week, Project and Upcoming. |
-| Actions | MIGRATED + EXPANDED | V3 list/detail/edit/logging supports completion and 0–10 Result Fields. |
-| Cycles | MIGRATED + EXPANDED | V3 page exposes current position, generated sequence, advancement and Small Cycle generation; deterministic exact/weighted Big Cycle rules live in the engine. |
-| To-do | MIGRATED | V3 To-do view reads migrated tasks, quick tasks and Action List occurrences. |
-| Projects | MIGRATED + EXPANDED | V3 project view supports Run Now, primary selection and condition/dependency/milestone engine data. |
-| Reviews | MIGRATED | V3 review list/create/complete view uses the migrated review records. |
-| Analysis | MIGRATED + EXPANDED | V3 filters factual logs and distinguishes GLOBAL UNIQUE from attributed/inclusive totals and target/result analysis. |
-| History | MIGRATED + EXPANDED | V3 renders the chronological factual ledger, snapshots and lifecycle records. |
-| Capacity | MIGRATED | V3 capacity view reads the preserved capacity settings and factual time. |
-| Settings | MIGRATED + EXPANDED | V3 Settings is separated into General, Capacity, Defaults, Build, Import / Export, Data & Storage, Bin / Recently Deleted and App. It exposes indexed search/filter/select management, dependency-aware cleanup, restore points and a controlled empty-state reset. |
-| Build functionality | MIGRATED + EXPANDED | Settings links to the existing V3 builders for Categories, Tags, Units, Actions, Result Fields and Blocks. Blocks remain the single V3 model for Collection, Action List, Routine, Workflow, Project, Cycle and Target. |
-| Import/export | MIGRATED + EXPANDED | Full backups use the canonical V3 exporter; Action and Block packages include required definition dependencies without unrelated runtime history. File and pasted JSON use the same validated, migrated, restore-point-protected atomic importer, with preview, import history and undo. |
-| Data management | NEW V3 MANAGEMENT SURFACE | A derived Data Manager supports search, type/subtype, status, usage/history and date filters. Archive, Move to Bin and Permanent Delete are separate operations; Bin restore preserves stable IDs, while historical snapshots/tombstones protect factual History. |
-| Persistence | MIGRATED + EXPANDED | V2/V1 keys are read without overwrite; V3 uses a separate key and safe in-memory fallback. |
-| Startup | MIGRATED + EXPANDED | V3 opens with a genuinely empty state when no data exists; JSON is never required and blocked storage is non-fatal. |
-| Navigation | MIGRATED + EXPANDED | V3 exposes Home, Actions, Blocks, Cycles, To-do, Projects, Reviews, Analysis, History, Capacity and Settings through one router. |
-| Domain engine | MIGRATED + EXPANDED | Pure Actions, Results, Units, taxonomy, relationships, Blocks, scheduling, Runs, Occurrences, Targets, Avoid, Cycles, lifecycle, analysis and migration modules. |
+A feature is marked complete only when its domain rules exist, the V3 UI
+exposes the operation, the command/runtime path is wired to the same engine,
+and the relevant regression coverage passes. “Tested” below refers to the
+Node domain/application/integration suite and the available render/command
+smoke checks; it is not a claim that a separate browser automation runner
+exists.
+
+| Feature | Domain implemented | UI implemented | Runtime wired | Tested |
+| --- | --- | --- | --- | --- |
+| Dashboard / Home | Yes | Yes | Yes | Yes — Home read-model regressions |
+| Actions and Results | Yes | Yes | Yes | Yes — completion, Result validation and analysis tests |
+| Collections | Yes | Yes | Yes | Yes — graph and runtime-boundary tests |
+| Action Lists | Yes | Yes | Yes | Yes — schedule, anchor, overlap and Activation tests |
+| Routines | Yes | Yes | Yes | Yes — fresh Runs, aggregation, qualification and finish tests |
+| Workflows | Yes | Yes | Yes | Yes — ordered steps, blocking, deadlines and Return tests |
+| Projects | Yes | Yes | Yes | Yes — conditions, milestones, dependencies and scope tests |
+| Cycles | Yes | Yes | Yes | Yes — generated exact/weighted slots and Big Cycle coverage tests |
+| Targets | Yes | Yes | Yes | Yes — outcome/measurement, child requirements and period tests |
+| Avoid Actions | Yes | Yes | Yes | Yes — binary, scored and multiplier tests |
+| To-do / Reviews | Yes | Yes | Yes | Yes — preserved command/storage coverage |
+| Analysis | Yes | Yes | Yes | Yes — attribution, Result and compatible-Unit analysis tests |
+| History | Yes | Yes | Yes | Yes — snapshots/tombstones and deletion-integrity tests |
+| Capacity | Yes | Yes | Yes | Yes — settings persistence coverage |
+| Settings | Yes | Yes | Yes | Yes — Settings render and management-command coverage |
+| Build functionality | Yes | Yes | Yes | Yes — taxonomy, Unit, Action and Block command coverage |
+| Import / Export | Yes | Yes | Yes | Yes — canonical package validation, preview, atomic import and undo |
+| Data Manager / Bin | Yes | Yes | Yes | Yes — indexed filters, dependency preview, stable-ID restore and runtime deletion |
+| Persistence / Migration | Yes | Yes | Yes | Yes — V2 compatibility, blocked storage and empty-state tests |
+| Navigation / V3 shell | Yes | Yes | Yes | Yes — route/render smoke coverage |
+
+The V3 Settings surface is separated into General, Capacity, Defaults, Build,
+Import / Export, Data & Storage, Bin / Recently Deleted and App. It uses the
+canonical exporter/importer, exact runtime-record selection for semantically
+valid cleanup, dependency-aware definition operations, restore points and a
+valid empty-state reset.
 
 No current feature was removed because a V3 rule was not yet connected to the
 UI. The V2 standalone artifact is kept for compatibility, while the root
-application now uses the V3 UI and engine as the single visible source of
-truth.
+application uses the V3 UI and engine as the single visible source of truth.
