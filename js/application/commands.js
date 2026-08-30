@@ -528,17 +528,17 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         return clone(state.runs[index]);
       });
     },
-    updateWorkflowStep(runId, stepId, stateName, reason = null) {
+    updateWorkflowStep(runId, stepId, stateName, reason = null, options = {}) {
       return repository.transaction(() => {
         const state = repository.getState();
         const { index, item: run } = requireStateItem(state.runs, runId, "Run");
         const block = state.blocks.find((candidate) => candidate.id === run.blockId);
         if (!block || block.type !== "workflow") throw new ValidationError("Run is not a Workflow Run.");
-        const next = transitionWorkflowStep({ run, stepId, state: stateName, reason, now: now() });
+        const next = transitionWorkflowStep({ run, stepId, state: stateName, reason, expectedUnblockAt: options.expectedUnblockAt || null, now: now() });
         const evaluated = evaluateRun(next, block, false);
         state.runs[index] = applyRunEvaluation(next, evaluated);
         touch();
-        addHistory({ type: "workflow", description: `Workflow step ${stateName}`, objectType: "run", objectId: runId, metadata: { stepId, state: stateName, reason } });
+        addHistory({ type: "workflow", description: `Workflow step ${stateName}`, objectType: "run", objectId: runId, metadata: { stepId, state: stateName, reason, expectedUnblockAt: options.expectedUnblockAt || null } });
         return clone(state.runs[index]);
       });
     },
@@ -547,7 +547,7 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
     skipWorkflowStep(runId, stepId, reason = "") { return this.updateWorkflowStep(runId, stepId, "SKIPPED", reason); },
     excuseWorkflowStep(runId, stepId, reason = "") { return this.updateWorkflowStep(runId, stepId, "EXCUSED", reason); },
     markWorkflowStepNotApplicable(runId, stepId, reason = "") { return this.updateWorkflowStep(runId, stepId, "NOT_APPLICABLE", reason); },
-    blockWorkflowStep(runId, stepId, reason = "") { return this.updateWorkflowStep(runId, stepId, "BLOCKED", reason); },
+    blockWorkflowStep(runId, stepId, reason = "", expectedUnblockAt = null) { return this.updateWorkflowStep(runId, stepId, "BLOCKED", reason, { expectedUnblockAt }); },
     unblockWorkflowStep(runId, stepId) { return this.updateWorkflowStep(runId, stepId, "AVAILABLE"); },
     releaseWorkflowStep(runId, stepId) { return this.updateWorkflowStep(runId, stepId, "AVAILABLE"); },
     cancelRun(id) {
