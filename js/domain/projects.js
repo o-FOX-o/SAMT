@@ -19,7 +19,10 @@ export function evaluateProjectCondition(condition = {}, context = {}) {
   if (condition.type === "target") return Boolean(context.targets?.[condition.targetId]?.reached);
   if (condition.type === "milestone") return Boolean(context.milestones?.[condition.milestoneId]?.satisfied ?? context.milestones?.[condition.milestoneId]?.status === "completed");
   if (condition.type === "result") {
-    const actualEntry = context.results?.[condition.fieldId]; const actual = resultValue(actualEntry); const field = context.resultFields?.[condition.fieldId]; if (actual == null) return false;
+    const field = context.resultFields?.[condition.fieldId] || Object.values(context.resultFields || {}).find((candidate) => condition.resultTagId && candidate.resultTagId === condition.resultTagId);
+    const actualEntry = field ? context.results?.[field.id] : context.results?.[condition.fieldId];
+    const actual = resultValue(actualEntry);
+    if (actual == null) return false;
     if (field?.type === "choice") {
       const config = normalizeResultConfig(field);
       if (condition.operator === "=" || condition.operator == null) { const left = Array.isArray(actual) ? [...actual].sort() : [actual]; const right = Array.isArray(condition.value) ? [...condition.value].sort() : [condition.value]; return left.length === right.length && left.every((value, index) => value === right[index]); }
