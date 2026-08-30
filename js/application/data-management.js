@@ -548,7 +548,7 @@ export function clearDataInState(state, options = {}) {
     const smallIds = new Set(filteredIds(state, "cycleSmallCycle", filter)); const bigIds = new Set(filteredIds(state, "cycleBigCycle", filter));
     result.cycleRuntime = smallIds.size + bigIds.size;
     state.cycleSmallCycles = (state.cycleSmallCycles || []).filter((item) => !smallIds.has(item.id));
-    state.cycleBigCycles = (state.cycleBigCycles || []).filter((item) => !bigIds.has(item.id)).map((item) => ({ ...item, smallCycles: (item.smallCycles || []).filter((small) => !smallIds.has(small.id)) }));
+    state.cycleBigCycles = (state.cycleBigCycles || []).filter((item) => !bigIds.has(item.id)).map((item) => ({ ...item, smallCycles: (item.smallCycles || []).filter((small) => !smallIds.has(small.id)), resolutions: (item.resolutions || []).filter((resolution) => !smallIds.has(resolution.smallCycleId)) }));
     for (const block of state.blocks || []) if (block.type === "cycle" && (smallIds.has(block.config?.currentSmallCycleId) || bigIds.has(block.config?.currentBigCycleId))) block.config = { ...(block.config || {}), currentSmallCycleId: null, currentBigCycleId: null };
   }
   if (categories.has("reviews")) { const ids = new Set(filteredIds(state, "review", filter)); state.reviews = (state.reviews || []).filter((item) => !ids.has(item.id)); result.reviews = ids.size; }
