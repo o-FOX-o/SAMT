@@ -81,6 +81,7 @@ function routineRun(state, block, run) {
 function workflowStepButtons(block, run, step) {
   const attrs = " data-run-id=\"" + esc(run.id) + "\" data-step-id=\"" + esc(step.id) + "\" data-block-id=\"" + esc(block.id) + "\"";
   let output = "";
+  if (step.state === "LOCKED" && (step.availabilityMode || step.timing?.availabilityMode) === "manual") output += button("release-workflow-step", "Release", attrs, "primary");
   if (step.state === "AVAILABLE" || step.state === "OVERDUE") output += button("start-workflow-step", "Start", attrs, "primary");
   if (["AVAILABLE", "IN_PROGRESS", "OVERDUE"].includes(step.state)) output += button("complete-workflow-step", "Complete", attrs);
   if (!TERMINAL_CHILDREN.includes(step.state) && step.allowSkip === true) output += button("skip-workflow-step", "Skip", attrs);
