@@ -452,7 +452,6 @@ test('Cycle deferred and unavailable outcomes keep the generated slot for later'
   const small = engine.commands.generateCycleSmallCycle(cycle.id);
   assert.equal(small.slots[0].relationshipId, relationship.id);
 
-  let runtime = repository.getState().cycleBigCycles[0];
   const deferred = engine.commands.resolveCycleSlot(cycle.id, { outcome: 'deferred' });
   assert.equal(deferred.bigCycle.currentSlot, 0);
   assert.deepEqual(deferred.bigCycle.appearanceCoverage, []);
