@@ -24,8 +24,8 @@ function activationStartAt(activation = {}) {
     : recurrence.anchorAt || recurrence.date || activation.startedAt;
   if (!raw) return null;
   const text = String(raw);
-  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(text)) {
-    const time = recurrence.time && /^\\d{2}:\\d{2}/.test(String(recurrence.time))
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
+    const time = recurrence.time && /^\d{2}:\d{2}/.test(String(recurrence.time))
       ? String(recurrence.time).slice(0, 5)
       : "00:00";
     return new Date(text + "T" + time + ":00.000Z");
