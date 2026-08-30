@@ -22,7 +22,9 @@ function activationStartAt(activation = {}, timezone = "UTC") {
   const recurrence = activation.recurrence || {};
   const raw = recurrence.mode === "calendar"
     ? recurrence.startDate || recurrence.anchorAt || activation.startedAt
-    : recurrence.anchorAt || recurrence.date || activation.startedAt;
+    : recurrence.mode === "once"
+      ? recurrence.date || recurrence.anchorAt || activation.startedAt
+      : recurrence.anchorAt || recurrence.date || activation.startedAt;
   if (!raw) return null;
   const text = String(raw);
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) {
