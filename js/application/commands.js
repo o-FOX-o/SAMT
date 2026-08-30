@@ -344,6 +344,30 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
     return { big, bigIndex, small };
   }
 
+  function resolveCycleSlotInState(state, id, { outcome = "completed", reason = null } = {}) {
+    const { index, item: cycle } = requireStateItem(state.blocks, id, "Cycle");
+    if (cycle.type !== "cycle") throw new ValidationError("Block is not a Cycle.");
+    const runtime = ensureCycleRuntime(state, cycle);
+    const slot = currentGeneratedCycleSlot(runtime.big, runtime.small);
+    if (!slot) throw new ValidationError("This Cycle has no generated slot to resolve.");
+    const relationship = (cycle.relationships || []).find((candidate) => candidate.id === slot.relationshipId);
+    if (outcome === "skipped" && relationship?.config?.allowSkip !== true) throw new ValidationError("Skipping this Cycle relationship is not allowed.");
+    if (outcome === "skipped" && relationship?.config?.requireSkipReason && !String(reason || "").trim()) throw new ValidationError("A skip reason is required.");
+    if (outcome === "completed" && relationship?.kind === "action" && relationship.config?.manualCompletion !== true) {
+      const action = state.actions.find((candidate) => candidate.id === relationship.refId);
+      const logs = (state.actionLogs || []).filter((log) => log.contextRefs?.some((reference) => reference.blockId === cycle.id && reference.relationshipId === relationship.id));
+      const aggregate = { quantity: logs.reduce((sum, log) => sum + Number(log.quantity || 0), 0), durationMinutes: logs.reduce((sum, log) => sum + Number(log.durationMinutes || 0), 0), logs };
+      if (!action || !isActionCompletionAchieved({ action, log: aggregate })) throw new ValidationError("Log enough of this Action to satisfy its completion requirement, or enable manual completion for the relationship.");
+    }
+    const slotIndex = Math.max(0, Number(runtime.big.currentSlot ?? 0));
+    const resolved = resolveDomainCycleSlot({ slot, outcome, allowSkip: relationship?.config?.allowSkip === true, reason, now: now() });
+    let updatedBig = recordCycleResolution({ bigCycle: runtime.big, smallCycle: runtime.small, relationshipId: resolved.relationshipId, slot: slotIndex, outcome: resolved.outcome, now: now() });
+    if (!["deferred", "unavailable"].includes(outcome)) updatedBig = advanceGeneratedCycleSlot(updatedBig, runtime.small, { steps: 1, now: now() });
+    state.cycleBigCycles[runtime.bigIndex] = updatedBig;
+    state.blocks[index] = { ...cycle, config: { ...(cycle.config || {}), currentSmallCycleId: runtime.small.id, currentSlot: updatedBig.currentSlot }, updatedAt: now().toISOString() };
+    return { cycle: state.blocks[index], bigCycle: updatedBig, smallCycle: runtime.small, resolution: resolved };
+  }
+
 
   return {
     createCategory(input = {}) {
@@ -530,6 +554,23 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         }
         if (input.commandId) log.commandId = input.commandId;
         state.actionLogs.push(log);
+        if (!run && input.blockId && input.relationshipId) {
+          const cycle = state.blocks.find((candidate) => candidate.id === input.blockId && candidate.type === "cycle");
+          if (cycle) {
+            const runtime = ensureCycleRuntime(state, cycle);
+            const slot = currentGeneratedCycleSlot(runtime.big, runtime.small);
+            const relationship = (cycle.relationships || []).find((candidate) => candidate.id === input.relationshipId);
+            if (slot?.relationshipId === input.relationshipId && relationship?.kind === "action" && relationship.config?.manualCompletion !== true) {
+              const cycleLogs = (state.actionLogs || []).filter((candidate) => candidate.contextRefs?.some((reference) => reference.blockId === cycle.id && reference.relationshipId === relationship.id));
+              const aggregate = { quantity: cycleLogs.reduce((sum, candidate) => sum + Number(candidate.quantity || 0), 0), durationMinutes: cycleLogs.reduce((sum, candidate) => sum + Number(candidate.durationMinutes || 0), 0), logs: cycleLogs };
+              if (isActionCompletionAchieved({ action, log: aggregate })) {
+                const resolved = resolveCycleSlotInState(state, cycle.id, { outcome: "completed" });
+                addHistory({ type: "cycle", description: "Resolved Cycle slot from Action Log", objectType: "cycle_resolution", objectId: resolved.resolution.relationshipId, metadata: { cycleId: cycle.id, smallCycleId: resolved.smallCycle.id, slot: resolved.resolution.slot, outcome: "completed", actionLogId: log.id } });
+                emit(EVENT_TYPES.CYCLE_ADVANCED, { cycleId: cycle.id, smallCycleId: resolved.smallCycle.id, slot: resolved.bigCycle.currentSlot, outcome: "completed", actionLogId: log.id });
+              }
+            }
+          }
+        }
         for (const reference of log.contextRefs || []) {
           const occurrence = state.occurrences.find((item) => item.id === reference.occurrenceId);
           if (!occurrence) continue;
@@ -840,34 +881,14 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         return clone(state.blocks[index]);
       });
     },
-    resolveCycleSlot(id, { outcome = "completed", reason = null } = {}) {
+    resolveCycleSlot(id, options = {}) {
       return repository.transaction(() => {
         const state = repository.getState();
-        const { index, item: cycle } = requireStateItem(state.blocks, id, "Cycle");
-        if (cycle.type !== "cycle") throw new ValidationError("Block is not a Cycle.");
-        const runtime = ensureCycleRuntime(state, cycle);
-        const slot = currentGeneratedCycleSlot(runtime.big, runtime.small);
-        if (!slot) throw new ValidationError("This Cycle has no generated slot to resolve.");
-        const relationship = (cycle.relationships || []).find((candidate) => candidate.id === slot.relationshipId);
-        if (outcome === "skipped" && relationship?.config?.allowSkip !== true) throw new ValidationError("Skipping this Cycle relationship is not allowed.");
-        if (outcome === "skipped" && relationship?.config?.requireSkipReason && !String(reason || "").trim()) throw new ValidationError("A skip reason is required.");
-        const slotIndex = Math.max(0, Number(runtime.big.currentSlot ?? 0));
-        const resolved = resolveDomainCycleSlot({ slot, outcome, allowSkip: relationship?.config?.allowSkip === true, reason, now: now() });
-        let updatedBig = recordCycleResolution({
-          bigCycle: runtime.big,
-          smallCycle: runtime.small,
-          relationshipId: resolved.relationshipId,
-          slot: slotIndex,
-          outcome: resolved.outcome,
-          now: now()
-        });
-        if (!["deferred", "unavailable"].includes(outcome)) updatedBig = advanceGeneratedCycleSlot(updatedBig, runtime.small, { steps: 1, now: now() });
-        state.cycleBigCycles[runtime.bigIndex] = updatedBig;
-        state.blocks[index] = { ...cycle, config: { ...(cycle.config || {}), currentSmallCycleId: runtime.small.id, currentSlot: updatedBig.currentSlot }, updatedAt: now().toISOString() };
+        const resolved = resolveCycleSlotInState(state, id, options);
         touch();
-        addHistory({ type: "cycle", description: `Resolved Cycle slot: ${outcome}`, objectType: "cycle_resolution", objectId: resolved.relationshipId, metadata: { cycleId: id, smallCycleId: runtime.small.id, slot: slotIndex, outcome, reason: reason || null } });
-        emit(EVENT_TYPES.CYCLE_ADVANCED, { cycleId: id, smallCycleId: runtime.small.id, slot: updatedBig.currentSlot, outcome });
-        return clone({ cycle: state.blocks[index], bigCycle: updatedBig, smallCycle: runtime.small, resolution: resolved });
+        addHistory({ type: "cycle", description: `Resolved Cycle slot: ${options.outcome || "completed"}`, objectType: "cycle_resolution", objectId: resolved.resolution.relationshipId, metadata: { cycleId: id, smallCycleId: resolved.smallCycle.id, slot: resolved.resolution.slot, outcome: resolved.resolution.outcome, reason: options.reason || null } });
+        emit(EVENT_TYPES.CYCLE_ADVANCED, { cycleId: id, smallCycleId: resolved.smallCycle.id, slot: resolved.bigCycle.currentSlot, outcome: resolved.resolution.outcome });
+        return clone(resolved);
       });
     },
     generateCycleSmallCycle(id) {
