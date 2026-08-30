@@ -106,7 +106,7 @@ export function analyzeResultValues({ field, values = [], units = [], operation 
     const ordinalAverage = config.orderMatters && ranks.length ? ranks.reduce((sum, value) => sum + value, 0) / ranks.length : null;
     const medianRank = config.orderMatters && ranks.length ? ranks.length % 2 ? ranks[(ranks.length - 1) / 2] : (ranks[ranks.length / 2 - 1] + ranks[ranks.length / 2]) / 2 : null;
     const latest = rows.at(-1); const canRank = config.orderMatters && config.betterDirection !== "none"; const selected = operation === "latest" || !operation ? latest : operation === "highest" ? (canRank ? rows.slice().sort((a, b) => choiceAnalyticalValue(field, b) - choiceAnalyticalValue(field, a))[0] : latest) : operation === "lowest" ? (canRank ? rows.slice().sort((a, b) => choiceAnalyticalValue(field, a) - choiceAnalyticalValue(field, b))[0] : latest) : latest;
-    return { count: rows.length, value: selected, frequencies, percentage: all.length ? Object.fromEntries(Object.entries(frequencies).map(([key, count]) => [key, count / all.length * 100])) : {}, ordinalAverage, medianRank, numericAverage: scores.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : null };
+    return { count: rows.length, value: selected, frequencies, percentage: all.length ? Object.fromEntries(Object.entries(frequencies).map(([key, count]) => [key, count / all.length * 100])) : {}, ordinalAverage, medianRank, numericAverage: scores.length === all.length && all.length ? scores.reduce((sum, value) => sum + value, 0) / scores.length : null };
   }
   let analysisUnitId = null;
   let analysisUnitSymbol = null;
@@ -147,6 +147,7 @@ export function choiceRank(field, optionId) {
 export function choiceAnalyticalValue(field, optionId) {
   const config = normalizeResultConfig(field); const option = config.options.find((candidate) => candidate.id === optionId);
   if (!option || !config.orderMatters || config.betterDirection === "none") return null;
+  if (option.analysisScore != null) return config.betterDirection === "lower" ? -option.analysisScore : option.analysisScore;
   return config.betterDirection === "lower" ? -option.position : option.position;
 }
 
