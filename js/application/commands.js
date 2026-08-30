@@ -667,7 +667,8 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         if (!block || block.type !== "project") throw new ValidationError("Run is not a Project Run.");
         const milestone = createMilestone({ ...input, id: input.id || makeId("milestone"), now: now() });
         const milestones = [...(run.runtime?.milestones || []), milestone];
-        state.runs[index] = { ...run, runtime: { ...(run.runtime || {}), milestones, updatedAt: now().toISOString() }, updatedAt: now().toISOString() };
+        const next = { ...run, runtime: { ...(run.runtime || {}), milestones, updatedAt: now().toISOString() }, updatedAt: now().toISOString() };
+        state.runs[index] = applyRunEvaluation(next, evaluateRun(next, block, false));
         touch();
         addHistory({ type: "project", description: `Added milestone: ${milestone.name}`, objectType: "milestone", objectId: milestone.id, metadata: { runId } });
         return clone(milestone);
@@ -677,8 +678,12 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
       return repository.transaction(() => {
         const state = repository.getState();
         const { index, item: run } = requireStateItem(state.runs, runId, "Run");
-        state.runs[index] = updateMilestone({ run, milestoneId, patch, now: now() });
+        const block = state.blocks.find((candidate) => candidate.id === run.blockId);
+        if (!block || block.type !== "project") throw new ValidationError("Run is not a Project Run.");
+        const next = updateMilestone({ run, milestoneId, patch, now: now() });
+        state.runs[index] = applyRunEvaluation(next, evaluateRun(next, block, false));
         touch();
+        addHistory({ type: "project", description: `Updated milestone: ${milestoneId}`, objectType: "milestone", objectId: milestoneId, metadata: { runId, patch: clone(patch) } });
         return clone(state.runs[index].runtime.milestones.find((milestone) => milestone.id === milestoneId));
       });
     },
