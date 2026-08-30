@@ -79,12 +79,17 @@ function routineRun(state, block, run) {
   const children = run.children || run.runtime?.children || [];
   return "<article class=\"samt-card samt-runtime-card\">" + runHeading(run) + "<div class=\"samt-progress\"><span style=\"width:" + Math.min(100, Number(progress.percentage) || 0) + "%\"></span></div><p class=\"samt-muted\">" + esc(String(progress.completed || 0)) + "/" + esc(String(progress.total || children.length)) + " complete · " + esc(pct(progress.percentage || 0)) + " · required " + (progress.requiredSatisfied ? "satisfied" : "not satisfied") + (run.status === "READY_TO_FINISH" ? " · READY TO FINISH" : "") + "</p><div class=\"samt-list\">" + (children.length ? children.slice().sort((a, b) => Number(a.position || 0) - Number(b.position || 0)).map((child) => runtimeChildRow(state, block, run, child)).join("") : "<p class=\"samt-empty\">No child runtime state.</p>") + "</div></article>";
 }
-function workflowStepButtons(block, run, step) {
+function workflowStepButtons(state, block, run, step) {
   const attrs = " data-run-id=\"" + esc(run.id) + "\" data-step-id=\"" + esc(step.id) + "\" data-block-id=\"" + esc(block.id) + "\"";
+  const relationship = relationshipById(run.snapshot?.block || block, step.relationshipId || step.id);
+  const actionId = relationship?.kind === "action" ? relationship.refId : null;
   let output = "";
   if (step.state === "LOCKED" && (step.availabilityMode || step.timing?.availabilityMode) === "manual") output += button("release-workflow-step", "Release", attrs, "primary");
   if (step.state === "AVAILABLE" || step.state === "OVERDUE") output += button("start-workflow-step", "Start", attrs, "primary");
-  if (["AVAILABLE", "IN_PROGRESS", "OVERDUE"].includes(step.state)) output += button("complete-workflow-step", "Complete", attrs);
+  if (["AVAILABLE", "IN_PROGRESS", "OVERDUE"].includes(step.state)) {
+    if (actionId) output += button("log-run-action", "＋ Log", " data-id=\"" + esc(actionId) + "\"" + attrs, "primary");
+    if (!actionId || relationship.config?.manualCompletion === true) output += button("complete-workflow-step", "Complete", attrs);
+  }
   if (!TERMINAL_CHILDREN.includes(step.state) && step.allowSkip === true) output += button("skip-workflow-step", "Skip", attrs);
   if (!TERMINAL_CHILDREN.includes(step.state) && step.allowExcuse === true) output += button("excuse-workflow-step", "Excuse", attrs);
   if (!TERMINAL_CHILDREN.includes(step.state) && step.allowNotApplicable === true) output += button("na-workflow-step", "N/A", attrs);
@@ -96,7 +101,7 @@ function workflowStepButtons(block, run, step) {
 function workflowRun(state, block, run) {
   const steps = run.steps || run.runtime?.steps || [];
   const current = steps.find((step) => step.id === run.currentStepId) || steps.find((step) => ["AVAILABLE", "IN_PROGRESS", "BLOCKED", "OVERDUE"].includes(step.state));
-  return "<article class=\"samt-card samt-runtime-card\">" + runHeading(run) + "<p class=\"samt-muted\">Current step: <strong>" + esc(current?.name || "None") + "</strong>" + (run.deadline ? " · workflow deadline " + esc(fmtDateTime(run.deadline)) : "") + "</p><div class=\"samt-list\">" + (steps.length ? steps.map((step) => "<div class=\"samt-list-row\"><div><strong>" + (step.id === current?.id ? "▶ " : "") + esc(step.name) + "</strong><small>" + esc(statusLabel(step.state)) + (step.required ? " · Required" : " · Optional") + (step.deadline ? " · deadline " + esc(fmtDateTime(step.deadline)) : "") + (step.expectedUnblockAt ? " · unblock by " + esc(fmtDateTime(step.expectedUnblockAt)) : "") + (step.reason ? " · " + esc(step.reason) : "") + "</small></div><div class=\"samt-row-actions\">" + workflowStepButtons(block, run, step) + "</div></div>").join("") : "<p class=\"samt-empty\">No workflow steps.</p>") + "</div></article>";
+  return "<article class=\"samt-card samt-runtime-card\">" + runHeading(run) + "<p class=\"samt-muted\">Current step: <strong>" + esc(current?.name || "None") + "</strong>" + (run.deadline ? " · workflow deadline " + esc(fmtDateTime(run.deadline)) : "") + "</p><div class=\"samt-list\">" + (steps.length ? steps.map((step) => "<div class=\"samt-list-row\"><div><strong>" + (step.id === current?.id ? "▶ " : "") + esc(step.name) + "</strong><small>" + esc(statusLabel(step.state)) + (step.required ? " · Required" : " · Optional") + (step.deadline ? " · deadline " + esc(fmtDateTime(step.deadline)) : "") + (step.expectedUnblockAt ? " · unblock by " + esc(fmtDateTime(step.expectedUnblockAt)) : "") + (step.reason ? " · " + esc(step.reason) : "") + "</small></div><div class=\"samt-row-actions\">" + workflowStepButtons(state, block, run, step) + "</div></div>").join("") : "<p class=\"samt-empty\">No workflow steps.</p>") + "</div></article>";
 }
 function projectConditionRows(run) {
   const results = run.runtime?.evaluation?.results || run.runtime?.evaluation?.conditionResults || [];
