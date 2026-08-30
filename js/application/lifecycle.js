@@ -339,6 +339,9 @@ export function reconcileTemporalState({
     for (const activation of state.activations || []) {
       const block = state.blocks?.find((candidate) => candidate.id === activation.blockId);
       if (!block || block.definitionStatus !== "ACTIVE") continue;
+      // Action Lists use their Activation as an occurrence-generation gate;
+      // they do not create generic Runs.
+      if (!["routine", "workflow", "project", "cycle"].includes(block.type)) continue;
       if (activation.status !== "active" || isActivationEnded(activation, current)) continue;
       const candidate = activationCandidate({
         activation,
