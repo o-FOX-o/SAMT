@@ -156,13 +156,25 @@ function blockSnapshot(block) {
   };
 }
 
-function initializeRuntime(block, snapshot, now) {
+function initializeRuntime(state, block, snapshot, now, ancestors = new Set([block.id])) {
   const source = { ...clone(block), ...clone(snapshot?.block || {}), relationships: clone(snapshot?.relationships || block.relationships || []) };
-  if (block.type === "routine") return initializeRoutineRuntime({ routine: source, now });
-  if (block.type === "workflow") return initializeWorkflowRuntime({ workflow: source, now });
-  if (block.type === "project") return initializeProjectRuntime({ project: source, now });
-  if (block.type === "cycle") return { type: "cycle", currentSmallCycleId: null, currentSlot: -1, smallCycleNumber: 0, appearanceCoverage: [], completionCoverage: [], startedAt: new Date(now).toISOString() };
-  return null;
+  let runtime = null;
+  if (block.type === "routine") runtime = initializeRoutineRuntime({ routine: source, now });
+  else if (block.type === "workflow") runtime = initializeWorkflowRuntime({ workflow: source, now });
+  else if (block.type === "project") runtime = initializeProjectRuntime({ project: source, now });
+  else if (block.type === "cycle") runtime = { type: "cycle", currentSmallCycleId: null, currentSlot: -1, smallCycleNumber: 0, appearanceCoverage: [], completionCoverage: [], startedAt: new Date(now).toISOString() };
+  if (!runtime || !Array.isArray(runtime.children)) return runtime;
+  const children = runtime.children.map((child) => {
+    const relationship = source.relationships?.find((candidate) => candidate.id === (child.relationshipId || child.id));
+    if (relationship?.kind !== "block") return child;
+    const childBlock = state.blocks.find((candidate) => candidate.id === relationship.refId);
+    if (!childBlock || !["routine", "workflow", "project", "cycle"].includes(childBlock.type)) return child;
+    if (ancestors.has(childBlock.id)) return { ...child, state: "BLOCKED", blockedReason: "Circular child runtime reference." };
+    const childSnapshot = blockSnapshot(childBlock);
+    const childRuntime = initializeRuntime(state, childBlock, childSnapshot, now, new Set([...ancestors, childBlock.id]));
+    return { ...child, childRuntime: { blockId: childBlock.id, type: childBlock.type, status: "IN_PROGRESS", snapshot: childSnapshot, runtime: childRuntime, startedAt: new Date(now).toISOString() } };
+  });
+  return { ...runtime, children };
 }
 
 function applyEvaluatedRun(run, evaluated, now) {
@@ -229,7 +241,7 @@ function activationCandidate({ activation, runs, occurrences, logs, now, timezon
 
 function createActivationRun(state, activation, block, candidate, now) {
   const snapshot = blockSnapshot(block);
-  const runtime = initializeRuntime(block, snapshot, now);
+  const runtime = initializeRuntime(state, block, snapshot, now);
   const run = startDomainRun(createRun({
     id: `run_${activation.id}_${String(candidate.scheduledAt || now.toISOString()).replace(/[^A-Za-z0-9_-]/g, "_")}`,
     blockId: block.id,
