@@ -270,6 +270,9 @@ export function buildDataManagerIndex(state = {}) {
 }
 
 function dateMatches(record, filters, now) {
+  // Date filters are meaningful for runtime, history, Bin and recovery records;
+  // library definitions have no event date and therefore remain visible.
+  if (DEFINITION_TYPES.includes(record.type)) return true;
   const date = safeDate(record.date);
   const mode = filters.dateFilter || filters.date || "all";
   if (mode === "all" || !mode) return true;
