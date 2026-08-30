@@ -34,7 +34,6 @@ test('Routine Runs initialize fresh children, aggregate logs and stop at READY_T
 
   const first = engine.commands.startRun({ blockId: routine.id, label: 'First session' });
   assert.equal(first.children[0].state, 'AVAILABLE');
-  console.log('DEBUG START', first.status, repository.getState().runs[0].status);
   engine.commands.logAction({
     actionId: item.id,
     runId: first.id,
@@ -44,7 +43,6 @@ test('Routine Runs initialize fresh children, aggregate logs and stop at READY_T
     finalizing: true
   });
   assert.equal(repository.getState().runs[0].children[0].state, 'IN_PROGRESS');
-  console.log('DEBUG PARTIAL', repository.getState().runs[0].status);
 
   engine.commands.logAction({
     actionId: item.id,
@@ -54,7 +52,6 @@ test('Routine Runs initialize fresh children, aggregate logs and stop at READY_T
     eventAt: clock.now(),
     finalizing: true
   });
-  console.log('DEBUG ROUTINE', JSON.stringify(repository.getState().runs[0]));
   assert.equal(repository.getState().runs[0].status, 'READY_TO_FINISH');
   engine.commands.finishRun(first.id);
   assert.equal(repository.getState().runs[0].status, 'COMPLETED');
