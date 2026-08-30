@@ -1,5 +1,6 @@
 import { aggregateLogsUnique } from "../domain/logs.js";
 import { analyzeResultValues } from "../domain/results.js";
+import { isCompatible } from "../domain/units.js";
 import { getBlockDescendants } from "./selectors.js";
 
 function boundary(value, end = false) {
@@ -36,11 +37,17 @@ function targetLogFilter(state, targetId) {
     !(excludedRelationshipIds.size && (log.contextRefs || []).some((reference) => reference.blockId === target.id && excludedRelationshipIds.has(reference.relationshipId)));
 }
 
+function valuesForField(logs, fieldId) {
+  return logs.flatMap((log) => (log.resultValues || [])
+    .filter((entry) => entry.fieldId === fieldId)
+    .map((entry) => entry.value));
+}
+
 function analyzeResultField(state, id, logs) {
   for (const action of state.actions || []) {
     const field = (action.resultFields || []).find((candidate) => candidate.id === id);
     if (!field) continue;
-    const values = logs.flatMap((log) => (log.resultValues || []).filter((entry) => entry.fieldId === id).map((entry) => field.type === "measurement" ? entry : entry.value));
+    const values = valuesForField(logs, id);
     try {
       return analyzeResultValues({ field, values, units: state.units || [] });
     } catch (error) {
@@ -48,6 +55,53 @@ function analyzeResultField(state, id, logs) {
     }
   }
   return null;
+}
+
+function analyzeResultTag(state, tagId, logs) {
+  const taggedFields = (state.actions || []).flatMap((action) =>
+    (action.resultFields || [])
+      .filter((field) => field.resultTagId === tagId)
+      .map((field) => ({ action, field, values: valuesForField(logs, field.id) }))
+  ).filter((item) => item.values.length);
+  const fieldAnalyses = taggedFields.map(({ action, field, values }) => {
+    try {
+      return { fieldId: field.id, actionId: action.id, actionName: action.name, label: field.label, type: field.type, analysis: analyzeResultValues({ field, values, units: state.units || [] }) };
+    } catch (error) {
+      return { fieldId: field.id, actionId: action.id, actionName: action.name, label: field.label, type: field.type, analysis: { count: values.length, error: error.message } };
+    }
+  });
+  const measurementGroups = [];
+  for (const item of taggedFields.filter((candidate) => candidate.field.type === "measurement")) {
+    const configuredUnit = item.field.config?.defaultUnitId || item.values.find((value) => value && typeof value === "object" && value.unitId)?.unitId || null;
+    let group = measurementGroups.find((candidate) =>
+      (!candidate.unitId && !configuredUnit) || candidate.unitId && configuredUnit && isCompatible(candidate.unitId, configuredUnit, state.units || [])
+    );
+    if (!group) {
+      group = { unitId: configuredUnit, fieldIds: [], values: [] };
+      measurementGroups.push(group);
+    }
+    group.fieldIds.push(item.field.id);
+    group.values.push(...item.values);
+  }
+  const groups = measurementGroups.map((group) => {
+    const source = taggedFields.find((item) => item.field.id === group.fieldIds[0]);
+    try {
+      return {
+        type: "measurement",
+        fieldIds: group.fieldIds,
+        analysis: analyzeResultValues({ field: source.field, values: group.values, units: state.units || [], targetUnitId: group.unitId })
+      };
+    } catch (error) {
+      return { type: "measurement", fieldIds: group.fieldIds, analysis: { count: group.values.length, error: error.message } };
+    }
+  });
+  return {
+    tagId,
+    count: taggedFields.reduce((sum, item) => sum + item.values.length, 0),
+    fields: fieldAnalyses,
+    groups,
+    incompatibleGroups: groups.length > 1
+  };
 }
 
 export function getAnalysisViewModel({
@@ -99,6 +153,7 @@ export function getAnalysisViewModel({
   const logs = aggregateLogsUnique(safeState.actionLogs || [], inRange);
   const totalMinutes = logs.reduce((sum, log) => sum + Number(log.durationMinutes || 0), 0);
   const result = resultFieldId ? analyzeResultField(safeState, resultFieldId, logs) : null;
+  const resultTag = resultTagId ? analyzeResultTag(safeState, resultTagId, logs) : null;
   const target = targetId ? (safeState.blocks || []).find((block) => block.id === targetId) || null : null;
   const targetPeriods = targetId ? (safeState.periods || []).filter((period) => period.ownerId === targetId).concat((safeState.targetEvaluations || []).filter((evaluation) => evaluation.ownerId === targetId)) : [];
   return {
@@ -107,6 +162,7 @@ export function getAnalysisViewModel({
     logCount: logs.length,
     totalMinutes,
     result,
+    resultTag,
     target,
     targetPeriods,
     filters: { from, to, blockId, attribution: mode, actionId, categoryId, tagId, blockType, runId, resultFieldId, resultTagId, targetId, targetPeriodId, view }
