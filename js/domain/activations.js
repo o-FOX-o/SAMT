@@ -1,6 +1,7 @@
 import { createId } from "../shared/ids.js";
 import { ValidationError } from "../shared/errors.js";
 import { clone } from "../shared/validation.js";
+import { validateActionListSchedule } from "./action-lists.js";
 
 export const ACTIVATION_MODES = ["manual", "run_now", "schedule"];
 export const ACTIVATION_STATUSES = ["active", "paused", "archived"];
@@ -33,6 +34,10 @@ export function createActivation({
   if (!ACTIVATION_MODES.includes(mode)) throw new ValidationError("Activation mode is invalid.");
   if (!ACTIVATION_STATUSES.includes(status)) throw new ValidationError("Activation status is invalid.");
   if (!Number.isInteger(Number(runCount)) || Number(runCount) < 0) throw new ValidationError("Activation run count is invalid.");
+  if (mode === "schedule") {
+    if (!recurrence || !["once", "interval", "calendar"].includes(recurrence.mode)) throw new ValidationError("Scheduled Activations require a once, interval or calendar recurrence.");
+    validateActionListSchedule(recurrence);
+  }
   const end = normalizeEnd({ endAt, endAfterRuns });
   const stamp = new Date(now).toISOString();
   return {
