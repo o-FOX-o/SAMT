@@ -48,7 +48,7 @@ export function calculateTargetProgress({ target, logs = [], period = null, acti
     else actual = selected.filter((log) => { const action = actions.find((candidate) => candidate.id === log.actionId); return action ? isActionCompletionAchieved({ action, log }) : Boolean(log.completed); }).length;
   } else {
     if (!resultField) throw new InvalidTargetError("Outcome Target requires a source Result Field.");
-    const values = selected.flatMap((log) => (log.resultValues || []).filter((entry) => entry.fieldId === resultField.id).map((entry) => resultField.type === "measurement" ? entry : entry.value));
+    const values = selected.flatMap((log) => (log.resultValues || []).filter((entry) => entry.fieldId === resultField.id).map((entry) => entry.value));
     analysis = analyzeResultValues({ field: resultField, values, units, operation: config.aggregation, targetUnitId: config.unitId || null });
     actual = analysis.value;
     if (resultField.type === "choice" && actual != null) {
