@@ -117,6 +117,7 @@ export function validateBlockGraph({ blocks = [], actions = [] } = {}) {
         contextualKeys.add(labelKey);
       }
       if (keys.has(key)) {
+        if (block.type === "collection") throw new ConflictError(`Collection ${block.id} cannot contain duplicate references: ${relationship.refId}`);
         if (relationship.kind === "block") throw new ConflictError(`A Block may appear only once directly in ${block.id}: ${relationship.refId}`);
         const contextual = Boolean(relationship.label || relationship.config?.contextualLabel || relationship.config?.allowDuplicate);
         if (!contextual) throw new ConflictError(`Duplicate direct relationship: ${key}`);
