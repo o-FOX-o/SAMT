@@ -54,7 +54,7 @@ export function isScheduleDue({ schedule = {}, at, timezone = "UTC" } = {}) {
 function localDate(value, timezone) { const p = partsInTimeZone(value, timezone); return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`; }
 
 function timeMatches(time, value, timezone) {
-  const match = String(time || "").match(/^(\\d{2}):(\\d{2})/);
+  const match = String(time || "").match(/^(\d{2}):(\d{2})/);
   if (!match) return true;
   const parts = partsInTimeZone(value, timezone);
   return Number(match[1]) === parts.hour && Number(match[2]) === parts.minute;
