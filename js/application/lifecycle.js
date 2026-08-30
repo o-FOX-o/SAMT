@@ -361,6 +361,7 @@ export function reconcileTemporalState({
     }
 
     for (const occurrence of state.occurrences || []) {
+      if (occurrence.legacyGenericChild) continue;
       const relationship = state.blocks?.flatMap((block) => block.relationships || [])
         .find((candidate) => candidate.id === occurrence.relationshipId);
       const action = relationship?.kind === "action"
