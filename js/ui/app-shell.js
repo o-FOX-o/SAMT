@@ -509,6 +509,7 @@ export function mountSamtApp(engine, documentRef = globalThis.document) {
       return runCommand(() => engine.commands.updateWorkflowStep(target.dataset.runId, target.dataset.stepId, stateName, reason, { expectedUnblockAt }), "Workflow step updated.");
     }
     if (action === "return-workflow-step") return runCommand(() => engine.commands.returnToWorkflowStep(target.dataset.runId, target.dataset.stepId), "Workflow returned to that step."); if (action === "release-workflow-step") return runCommand(() => engine.commands.releaseWorkflowStep(target.dataset.runId, target.dataset.stepId), "Workflow step released.");
+    if (action === "apply-project-scope") return runCommand(() => engine.commands.applyProjectScopeChange(target.dataset.runId), "Project scope updated for this Run.");
     if (action === "add-project-milestone") return openProjectMilestoneModal(target.dataset.runId);
     if (action === "edit-project-milestone") return openProjectMilestoneModal(target.dataset.runId, target.dataset.milestoneId);
     if (action === "complete-project-milestone") return runCommand(() => engine.commands.completeProjectMilestone(target.dataset.runId, target.dataset.milestoneId), "Milestone completed.");
