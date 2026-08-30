@@ -33,6 +33,7 @@ function cycleCard(state, cycle) {
   const relationships = cycle.relationships || [];
   const currentName = runtime.currentRelationship ? relationshipLabel(state, runtime.currentRelationship) : "No generated slot";
   const big = runtime.big;
+  const bigNumber = big ? allBig.indexOf(big) + 1 : null;
   const canResolve = Boolean(runtime.current && runtime.currentRelationship);
   const currentSlotText = runtime.current ? "Slot " + (runtime.index + 1) + " of " + runtime.slots.length : "Generate a Small Cycle";
   const needsGeneration = !runtime.small || !runtime.slots.length || runtime.index >= runtime.slots.length;
@@ -44,7 +45,7 @@ function cycleCard(state, cycle) {
   return '<article class="samt-card">' +
     '<div class="samt-card-head"><div><a class="samt-entity-link" href="#/blocks/' + encodeURIComponent(cycle.id) + '"><h2>' + esc(cycle.name) + '</h2></a><span class="samt-badge">' + esc(cycle.config?.generationMode || "simple_ordered") + '</span></div><span class="samt-status">' + esc(statusLabel(cycle.definitionStatus)) + '</span></div>' +
     '<p class="samt-cycle-current">Current generated item: <strong>' + esc(currentName) + '</strong></p>' +
-    '<dl class="samt-definition-list"><div><dt>Small Cycle</dt><dd>' + esc(String(runtime.small?.smallCycleNumber || big?.smallCycles?.length || "—")) + ' · ' + esc(currentSlotText) + '</dd></div><div><dt>Big Cycle</dt><dd>' + esc(String(big?.bigCycleNumber || (big ? 1 : "—"))) + ' · ' + esc(big?.status || "not started") + '</dd></div><div><dt>Appearance</dt><dd>' + esc(coverageLabel(big?.appearanceCoverage, big?.participantRelationshipIds?.length || relationships.length)) + '</dd></div><div><dt>Completion</dt><dd>' + esc(coverageLabel(big?.completionCoverage, big?.participantRelationshipIds?.length || relationships.length)) + '</dd></div></dl>' +
+    '<dl class="samt-definition-list"><div><dt>Small Cycle</dt><dd>' + esc(String(runtime.small?.smallCycleNumber || big?.smallCycles?.length || "—")) + ' · ' + esc(currentSlotText) + '</dd></div><div><dt>Big Cycle</dt><dd>' + esc(String(big?.bigCycleNumber || (bigNumber || "—"))) + ' · ' + esc(big?.status || "not started") + '</dd></div><div><dt>Appearance</dt><dd>' + esc(coverageLabel(big?.appearanceCoverage, big?.participantRelationshipIds?.length || relationships.length)) + '</dd></div><div><dt>Completion</dt><dd>' + esc(coverageLabel(big?.completionCoverage, big?.participantRelationshipIds?.length || relationships.length)) + '</dd></div></dl>' +
     '<div class="samt-sequence">' + (runtime.slots.length ? runtime.slots.map((slot, index) => slotLabel(state, cycle, slot, index, runtime.current ? runtime.displayIndex : -1)).join("") : '<span class="samt-muted">No generated slots yet.</span>') + '</div>' +
     '<div class="samt-card-actions">' +
       (canResolve ? '<button class="samt-button primary" data-action="resolve-cycle-slot" data-id="' + esc(cycle.id) + '" data-outcome="completed">Complete / Log</button><button class="samt-button ghost" data-action="resolve-cycle-slot" data-id="' + esc(cycle.id) + '" data-outcome="skipped" data-require-reason="true">Skip</button>' : "") +
