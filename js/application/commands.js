@@ -298,8 +298,19 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         const children = (run.children || []).map((child) => child.relationshipId === relationship.id ? { ...child, logIds: [...new Set([...(child.logIds || []), ...aggregate.logs.map((item) => item.id)])], state: child.state === "AVAILABLE" ? "IN_PROGRESS" : child.state, updatedAt: now().toISOString() } : child);
         next = { ...run, children, runtime: { ...(run.runtime || {}), children: clone(children) }, updatedAt: now().toISOString() };
       }
-    } else if (block.type === "workflow" && input.completeStep === true) {
-      next = transitionWorkflowStep({ run, stepId: relationship.id, state: "COMPLETED", reason: null, now: now() });
+    } else if (block.type === "workflow") {
+      const step = (run.steps || []).find((candidate) => candidate.id === relationship.id || candidate.relationshipId === relationship.id);
+      const actionCompleted = isActionCompletionAchieved({ action, log: aggregate });
+      const manualCompletion = input.completeStep === true && relationship.config?.manualCompletion === true;
+      const logIds = [...new Set([...(step?.logIds || []), ...aggregate.logs.map((item) => item.id)])];
+      if (step && (actionCompleted || manualCompletion)) {
+        const transitioned = transitionWorkflowStep({ run, stepId: step.id, state: "COMPLETED", reason: null, now: now() });
+        const steps = (transitioned.steps || []).map((candidate) => candidate.id === step.id ? { ...candidate, logIds } : candidate);
+        next = { ...transitioned, steps, runtime: { ...(transitioned.runtime || {}), steps: clone(steps) } };
+      } else if (step) {
+        const steps = (run.steps || []).map((candidate) => candidate.id === step.id ? { ...candidate, logIds, state: candidate.state === "AVAILABLE" ? "IN_PROGRESS" : candidate.state, updatedAt: now().toISOString() } : candidate);
+        next = { ...run, steps, currentStepId: run.currentStepId || step.id, runtime: { ...(run.runtime || {}), type: "workflow", steps: clone(steps), currentStepId: run.currentStepId || step.id }, updatedAt: now().toISOString() };
+      }
     }
     const evaluation = evaluateRun(next, block, false);
     return applyRunEvaluation(next, evaluation, { finished: false });
@@ -502,6 +513,11 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
           } else {
             contextRefs.push(context);
           }
+        } else if (input.blockId) {
+          const context = { blockId: input.blockId, relationshipId: input.relationshipId || null };
+          const existingBlockReference = contextRefs.find((reference) => reference.blockId === input.blockId && !reference.runId && !reference.occurrenceId);
+          if (existingBlockReference) Object.assign(existingBlockReference, context);
+          else contextRefs.push(context);
         }
         const log = createActionLog({ ...input, contextRefs, action, finalizing: Boolean(input.finalizing), now: now(), units: state.units });
         if (state.actionLogs.some((candidate) => candidate.id === log.id)) throw new ConflictError(`Action Log ID already exists: ${log.id}`);
@@ -539,7 +555,27 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         return clone(log);
       });
     },
-    deleteActionLog(id) { return repository.transaction(() => { const state = repository.getState(); const { index, item: removed } = requireStateItem(state.actionLogs, id, "Action Log"); state.actionLogs.splice(index, 1); for (const occurrence of state.occurrences || []) occurrence.logIds = (occurrence.logIds || []).filter((logId) => logId !== id); touch(); addHistory({ type: "action_log", description: `Deleted Action Log: ${removed.actionSnapshot?.name || removed.actionId}`, objectType: "actionLog", objectId: id, metadata: { factualSnapshotPreserved: true }, snapshots: { deleted: removed } }); emit(EVENT_TYPES.ACTION_LOG_DELETED, { actionLogId: id }); return clone(removed); }); },
+    deleteActionLog(id) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index, item: removed } = requireStateItem(state.actionLogs, id, "Action Log");
+        const affected = (state.occurrences || []).filter((occurrence) => (occurrence.logIds || []).includes(id));
+        state.actionLogs.splice(index, 1);
+        for (const occurrence of state.occurrences || []) occurrence.logIds = (occurrence.logIds || []).filter((logId) => logId !== id);
+        for (const occurrence of affected) {
+          if (["skipped", "excused", "not_applicable"].includes(occurrence.status)) continue;
+          const relationship = state.blocks.flatMap((block) => block.relationships || []).find((candidate) => candidate.id === occurrence.relationshipId);
+          const action = relationship?.kind === "action" ? state.actions.find((candidate) => candidate.id === relationship.refId) : null;
+          const candidate = occurrence.status === "completed" ? { ...occurrence, status: "due" } : occurrence;
+          occurrence.status = resolveOccurrenceStatus({ occurrence: candidate, logs: state.actionLogs, action, now: now(), unfinishedPolicy: occurrence.snapshot?.unfinishedPolicy || relationship?.config?.unfinishedPolicy || "expire" });
+          occurrence.updatedAt = now().toISOString();
+        }
+        touch();
+        addHistory({ type: "action_log", description: `Deleted Action Log: ${removed.actionSnapshot?.name || removed.actionId}`, objectType: "actionLog", objectId: id, metadata: { factualSnapshotPreserved: true, affectedOccurrences: affected.map((occurrence) => occurrence.id) }, snapshots: { deleted: removed } });
+        emit(EVENT_TYPES.ACTION_LOG_DELETED, { actionLogId: id });
+        return clone(removed);
+      });
+    },
     createActivation(input = {}) {
       return repository.transaction(() => {
         const state = repository.getState();
@@ -619,6 +655,13 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         const { index, item: run } = requireStateItem(state.runs, runId, "Run");
         const block = state.blocks.find((candidate) => candidate.id === run.blockId);
         if (!block || block.type !== "routine") throw new ValidationError("Run is not a Routine Run.");
+        if (stateName === "COMPLETED") {
+          const relationship = runRelationships(run, block).find((candidate) => candidate.id === relationshipId);
+          const action = relationship?.kind === "action" ? state.actions.find((candidate) => candidate.id === relationship.refId) : null;
+          if (action && relationship.config?.manualCompletion !== true && !isActionCompletionAchieved({ action, log: aggregatedRunLog(state, run, relationship.id, action) })) {
+            throw new ValidationError("Log enough of this Action to satisfy its completion requirement, or enable manual completion for the relationship.");
+          }
+        }
         const next = updateRoutineChild({ run, relationshipId, state: stateName, reason, now: now() });
         state.runs[index] = applyRunEvaluation(next, evaluateRun(next, block, false));
         touch();
@@ -665,6 +708,13 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         const { index, item: run } = requireStateItem(state.runs, runId, "Run");
         const block = state.blocks.find((candidate) => candidate.id === run.blockId);
         if (!block || block.type !== "project") throw new ValidationError("Run is not a Project Run.");
+        if (stateName === "COMPLETED") {
+          const relationship = runRelationships(run, block).find((candidate) => candidate.id === relationshipId);
+          const action = relationship?.kind === "action" ? state.actions.find((candidate) => candidate.id === relationship.refId) : null;
+          if (action && relationship.config?.manualCompletion !== true && !isActionCompletionAchieved({ action, log: aggregatedRunLog(state, run, relationship.id, action) })) {
+            throw new ValidationError("Log enough of this Action to satisfy its completion requirement, or enable manual completion for the relationship.");
+          }
+        }
         const next = updateProjectChild({ run, relationshipId, state: stateName, reason, expectedUnblockAt: options.expectedUnblockAt || null, now: now() });
         state.runs[index] = applyRunEvaluation(next, evaluateRun(next, block, false));
         touch();
