@@ -2,6 +2,7 @@ import { createId } from "../shared/ids.js";
 import { ValidationError } from "../shared/errors.js";
 import { clone } from "../shared/validation.js";
 import { validateActionListSchedule } from "./action-lists.js";
+import { zonedDateTime } from "../shared/dates.js";
 
 export const ACTIVATION_MODES = ["manual", "run_now", "schedule"];
 export const ACTIVATION_STATUSES = ["active", "paused", "archived"];
@@ -17,7 +18,7 @@ export function isActivationEnded(activation = {}, now = new Date()) {
   return Boolean((end.endAt && new Date(now) >= new Date(end.endAt)) || (end.endAfterRuns != null && Number(activation.runCount || 0) >= end.endAfterRuns));
 }
 
-function activationStartAt(activation = {}) {
+function activationStartAt(activation = {}, timezone = "UTC") {
   const recurrence = activation.recurrence || {};
   const raw = recurrence.mode === "calendar"
     ? recurrence.startDate || recurrence.anchorAt || activation.startedAt
@@ -28,7 +29,7 @@ function activationStartAt(activation = {}) {
     const time = recurrence.time && /^\d{2}:\d{2}/.test(String(recurrence.time))
       ? String(recurrence.time).slice(0, 5)
       : "00:00";
-    return new Date(text + "T" + time + ":00.000Z");
+    return zonedDateTime({ date: text, time, timezone: recurrence.timezone || timezone });
   }
   return new Date(raw);
 }
@@ -37,7 +38,7 @@ function activationStartAt(activation = {}) {
 // Once its first configured time has arrived it remains enabled until its
 // explicit end; recurrence still controls new Run creation for Run-capable
 // Blocks.
-export function isActivationEnabled(activation = {}, now = new Date()) {
+export function isActivationEnabled(activation = {}, now = new Date(), timezone = "UTC") {
   if (!activation || activation.status !== "active" || isActivationEnded(activation, now)) return false;
   if (activation.mode === "manual" || activation.mode === "run_now") return true;
   const current = new Date(now);
@@ -45,7 +46,7 @@ export function isActivationEnabled(activation = {}, now = new Date()) {
   const recurrence = activation.recurrence || {};
   if (recurrence.activeFrom && current < new Date(recurrence.activeFrom)) return false;
   if (recurrence.activeUntil && current > new Date(recurrence.activeUntil)) return false;
-  const start = activationStartAt(activation);
+  const start = activationStartAt(activation, timezone);
   return !start || Number.isFinite(start.getTime()) && current >= start;
 }
 
