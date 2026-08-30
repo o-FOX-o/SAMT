@@ -210,6 +210,7 @@ export function mountSamtApp(engine, documentRef = globalThis.document) {
           occurrenceId: data.get("occurrenceId") || null,
           runId: data.get("runId") || null,
           relationshipId: data.get("relationshipId") || null,
+          blockId: data.get("blockId") || null,
           note: data.get("note") || "",
           finalizing: true,
           commandId: "ui-log-" + Date.now() + "-" + Math.random().toString(36).slice(2)
