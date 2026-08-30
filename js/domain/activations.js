@@ -17,6 +17,38 @@ export function isActivationEnded(activation = {}, now = new Date()) {
   return Boolean((end.endAt && new Date(now) >= new Date(end.endAt)) || (end.endAfterRuns != null && Number(activation.runCount || 0) >= end.endAfterRuns));
 }
 
+function activationStartAt(activation = {}) {
+  const recurrence = activation.recurrence || {};
+  const raw = recurrence.mode === "calendar"
+    ? recurrence.startDate || recurrence.anchorAt || activation.startedAt
+    : recurrence.anchorAt || recurrence.date || activation.startedAt;
+  if (!raw) return null;
+  const text = String(raw);
+  if (/^\\d{4}-\\d{2}-\\d{2}$/.test(text)) {
+    const time = recurrence.time && /^\\d{2}:\\d{2}/.test(String(recurrence.time))
+      ? String(recurrence.time).slice(0, 5)
+      : "00:00";
+    return new Date(text + "T" + time + ":00.000Z");
+  }
+  return new Date(raw);
+}
+
+// A scheduled Activation is an execution gate as well as a Run trigger.
+// Once its first configured time has arrived it remains enabled until its
+// explicit end; recurrence still controls new Run creation for Run-capable
+// Blocks.
+export function isActivationEnabled(activation = {}, now = new Date()) {
+  if (!activation || activation.status !== "active" || isActivationEnded(activation, now)) return false;
+  if (activation.mode === "manual" || activation.mode === "run_now") return true;
+  const current = new Date(now);
+  if (!Number.isFinite(current.getTime())) return false;
+  const recurrence = activation.recurrence || {};
+  if (recurrence.activeFrom && current < new Date(recurrence.activeFrom)) return false;
+  if (recurrence.activeUntil && current > new Date(recurrence.activeUntil)) return false;
+  const start = activationStartAt(activation);
+  return !start || Number.isFinite(start.getTime()) && current >= start;
+}
+
 export function createActivation({
   id = null,
   blockId,
