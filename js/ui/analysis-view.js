@@ -16,7 +16,7 @@ function resultTagMarkup(resultTag) {
   if (!resultTag) return "";
   const fields = (resultTag.fields || []).map((item) => {
     const analysis = item.analysis || {};
-    const value = analysis.error || analysis.latest ?? analysis.value ?? analysis.numericAverage ?? "—";
+    const value = analysis.error || (analysis.latest != null ? analysis.latest : analysis.value != null ? analysis.value : analysis.numericAverage != null ? analysis.numericAverage : "—");
     const unit = analysis.unitSymbol ? " " + analysis.unitSymbol : "";
     return '<div class="samt-list-row"><div><strong>' + esc(item.actionName + " · " + item.label) + '</strong><small>' + esc(item.type) + ' · ' + esc(String(analysis.count || 0)) + ' value(s)</small></div><span class="samt-metric">' + esc(String(value)) + esc(unit) + '</span></div>';
   }).join("");
