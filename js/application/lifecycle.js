@@ -437,7 +437,7 @@ export function reconcileTemporalState({
       if (block.definitionStatus !== "ACTIVE" || block.type !== "action_list") continue;
       const enabledByActivation = (state.activations || []).filter((activation) => activation.blockId === block.id);
       if (enabledByActivation.length && !enabledByActivation.some((activation) =>
-        isActivationEnabled(activation, current)
+        isActivationEnabled(activation, current, timezone)
       )) continue;
       for (const relationship of block.relationships || []) {
         if (relationship.kind !== "action") continue;
