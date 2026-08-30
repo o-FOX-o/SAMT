@@ -33,6 +33,24 @@ function zonedPartsToUtc(parts, timezone) {
   return new Date(guess);
 }
 
+export function zonedDateTime({ date, time = "00:00", timezone = "UTC" } = {}) {
+  const dateText = String(date || "");
+  const dateMatch = dateText.match(/^(\\d{4})-(\\d{2})-(\\d{2})$/);
+  const dateParts = dateMatch
+    ? { year: Number(dateMatch[1]), month: Number(dateMatch[2]), day: Number(dateMatch[3]) }
+    : partsInTimeZone(date, timezone);
+  const timeMatch = String(time || "00:00").match(/^(\\d{2}):(\\d{2})(?::(\\d{2}))?$/);
+  if (!dateParts || !timeMatch || Number(timeMatch[1]) > 23 || Number(timeMatch[2]) > 59 || Number(timeMatch[3] || 0) > 59) {
+    throw new InvalidScheduleError("Invalid local date/time.");
+  }
+  return zonedPartsToUtc({
+    ...dateParts,
+    hour: Number(timeMatch[1]),
+    minute: Number(timeMatch[2]),
+    second: Number(timeMatch[3] || 0)
+  }, timezone);
+}
+
 export function startOfLocalDay(value, timezone = "UTC") {
   const p = partsInTimeZone(value, timezone);
   return zonedPartsToUtc({ year: p.year, month: p.month, day: p.day, hour: 0 }, timezone);
