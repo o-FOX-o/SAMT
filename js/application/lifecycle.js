@@ -7,7 +7,7 @@ import { appendHistory } from "../domain/history.js";
 import { shouldGenerateScheduledOccurrence, validateActionListSchedule } from "../domain/action-lists.js";
 import { clone } from "../shared/validation.js";
 import { createRun, startRun as startDomainRun, isRunTerminal } from "../domain/runs.js";
-import { createActivation, isActivationEnded, recordActivationRun } from "../domain/activations.js";
+import { createActivation, isActivationEnded, isActivationEnabled, recordActivationRun } from "../domain/activations.js";
 import { initializeRoutineRuntime, evaluateRoutineRun } from "../domain/routines.js";
 import { initializeWorkflowRuntime, evaluateWorkflowRun } from "../domain/workflows.js";
 import { initializeProjectRuntime, evaluateProjectRun } from "../domain/projects.js";
@@ -18,7 +18,7 @@ function periodIdentity(ownerId, bounds, style) {
 
 function ensurePeriod(state, owner, config, now, timezone, created) {
   const period = config.period || "day";
-  if (["session", "all_time"].includes(period)) return null;
+  if (["session", "all_time"].includes(period) || style === "rolling") return null;
   const style = config.periodStyle || "calendar";
   const bounds = calculatePeriodBounds({
     period,
@@ -435,7 +435,7 @@ export function reconcileTemporalState({
       if (block.definitionStatus !== "ACTIVE" || block.type !== "action_list") continue;
       const enabledByActivation = (state.activations || []).filter((activation) => activation.blockId === block.id);
       if (enabledByActivation.length && !enabledByActivation.some((activation) =>
-        activation.status === "active" && !isActivationEnded(activation, current)
+        isActivationEnabled(activation, current)
       )) continue;
       for (const relationship of block.relationships || []) {
         if (relationship.kind !== "action") continue;
