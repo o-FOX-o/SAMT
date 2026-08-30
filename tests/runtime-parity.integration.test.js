@@ -462,3 +462,38 @@ test('Cycle deferred and unavailable outcomes keep the generated slot for later'
   assert.equal(completed.bigCycle.status, 'completed');
   assert.equal(completed.bigCycle.completionCoverage.includes(relationship.id), true);
 });
+
+test('explicit Action Log deletion cleans runtime references and reopens derived completion', () => {
+  const { clock, repository, engine } = harness();
+  const item = action(engine, 'action_delete_runtime', 'Delete me', { method: 'time', minimumMinutes: 1 });
+  const routine = engine.commands.createBlock({
+    id: 'block_delete_runtime',
+    type: 'routine',
+    name: 'Deletion routine',
+    definitionStatus: 'ACTIVE'
+  });
+  const relationship = engine.commands.addRelationship(routine.id, {
+    id: 'relationship_delete_runtime',
+    kind: 'action',
+    refId: item.id,
+    config: { required: true }
+  });
+  const run = engine.commands.startRun({ blockId: routine.id });
+  const log = engine.commands.logAction({
+    actionId: item.id,
+    runId: run.id,
+    relationshipId: relationship.id,
+    durationMinutes: 1,
+    eventAt: clock.now(),
+    finalizing: true
+  });
+  assert.equal(repository.getState().runs[0].children[0].state, 'COMPLETED');
+  assert.equal(repository.getState().runs[0].status, 'COMPLETED');
+
+  engine.commands.deleteActionLog(log.id);
+  const current = repository.getState();
+  assert.equal(current.actionLogs.length, 0);
+  assert.deepEqual(current.runs[0].children[0].logIds, []);
+  assert.equal(current.runs[0].children[0].state, 'AVAILABLE');
+  assert.equal(current.runs[0].status, 'NOT_STARTED');
+});
