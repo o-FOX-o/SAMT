@@ -92,13 +92,18 @@ function addInterval(start, amount, unit, timezone) {
   return addCalendarDays(date, amount, timezone);
 }
 
-function latestCompletionAt(occurrences, logs, relationshipId) {
-  const occurrenceIds = new Set(occurrences.filter((item) => item.relationshipId === relationshipId && item.status === "completed").map((item) => item.id));
+function latestCompletionAt(records, logs, relationshipId) {
+  const completed = records.filter((item) =>
+    item.relationshipId === relationshipId && String(item.status || "").toLowerCase() === "completed"
+  );
+  const occurrenceIds = new Set(completed.map((item) => item.id));
+  const runIds = new Set(completed.map((item) => item.runId).filter(Boolean));
   const matching = logs.filter((log) => log.contextRefs?.some((reference) =>
     reference.occurrenceId && occurrenceIds.has(reference.occurrenceId)
+      || reference.runId && runIds.has(reference.runId)
   ));
   return matching.map((log) => log.eventAt || log.createdAt).filter(Boolean).sort().at(-1) ||
-    occurrences.filter((item) => occurrenceIds.has(item.id)).map((item) => item.updatedAt || item.createdAt).sort().at(-1) ||
+    completed.map((item) => item.finishedAt || item.updatedAt || item.createdAt).filter(Boolean).sort().at(-1) ||
     null;
 }
 
@@ -208,9 +213,12 @@ function activationCandidate({ activation, runs, occurrences, logs, now, timezon
     relationshipId: activation.id,
     existing: runs.filter((run) => run.activationId === activation.id).map((run) => ({
       relationshipId: activation.id,
+      id: run.id,
+      runId: run.id,
       scheduledAt: run.scheduledAt,
       createdAt: run.createdAt,
-      status: run.status
+      finishedAt: run.finishedAt || null,
+      status: String(run.status || "").toLowerCase()
     })),
     logs,
     occurrences,
