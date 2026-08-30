@@ -30,8 +30,10 @@ function targetLogFilter(state, targetId) {
   const config = target.config || {};
   const actionIds = new Set(config.sourceActionIds || []);
   const descendants = config.sourceBlockId ? new Set([config.sourceBlockId, ...getBlockDescendants(state, config.sourceBlockId)]) : null;
+  const excludedRelationshipIds = new Set((target.relationships || []).filter((relationship) => relationship.config?.includeInTarget === false).map((relationship) => relationship.id));
   return (log) => (!actionIds.size || actionIds.has(log.actionId)) &&
-    (!descendants || referencesBlock(log, descendants));
+    (!descendants || referencesBlock(log, descendants)) &&
+    !(excludedRelationshipIds.size && (log.contextRefs || []).some((reference) => reference.blockId === target.id && excludedRelationshipIds.has(reference.relationshipId)));
 }
 
 function analyzeResultField(state, id, logs) {
