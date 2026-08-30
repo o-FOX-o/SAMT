@@ -333,6 +333,29 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         const next = { ...action, resultFields: nextFields, updatedAt: now().toISOString() }; replaceAt(state.actions, index, next); touch(); addHistory({ type: "definition", description: `Updated Result Field: ${candidate.label || before.label}`, objectType: "resultField", objectId: fieldId, snapshots: { actionId, before: clone(before), after: clone(nextFields.find((field) => field.id === fieldId)) } }); emit(EVENT_TYPES.DEFINITION_CHANGED, { objectType: "resultField", objectId: fieldId }); return clone(nextFields.find((field) => field.id === fieldId));
       });
     },
+    moveResultField(actionId, fieldId, direction = "up") {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index } = requireStateItem(state.actions, actionId, "Action");
+        const action = state.actions[index];
+        const source = action.resultFields || [];
+        const currentIndex = source.findIndex((field) => field.id === fieldId);
+        if (currentIndex < 0) throw new NotFoundError(`Result Field not found: ${fieldId}`);
+        if (!["up", "down"].includes(direction)) throw new ValidationError("Result Field move direction is invalid.");
+        const targetIndex = direction === "up" ? currentIndex - 1 : currentIndex + 1;
+        if (targetIndex < 0 || targetIndex >= source.length) return clone(source[currentIndex]);
+        const ordered = source.slice();
+        [ordered[currentIndex], ordered[targetIndex]] = [ordered[targetIndex], ordered[currentIndex]];
+        const nextFields = versionResultFields(source, ordered.map((field, position) => ({ ...field, position })), now());
+        validateResultFields(nextFields, state.units);
+        const next = { ...action, resultFields: nextFields, updatedAt: now().toISOString() };
+        replaceAt(state.actions, index, next);
+        touch();
+        addHistory({ type: "definition", description: `Reordered Result Field: ${fieldId}`, objectType: "resultField", objectId: fieldId, snapshots: { actionId, order: nextFields.map((field) => field.id) } });
+        emit(EVENT_TYPES.DEFINITION_CHANGED, { objectType: "resultField", objectId: fieldId });
+        return clone(nextFields.find((field) => field.id === fieldId));
+      });
+    },
     removeResultField(actionId, fieldId) {
       return repository.transaction(() => {
         const state = repository.getState(); const { index } = requireStateItem(state.actions, actionId, "Action"); const action = state.actions[index]; const field = (action.resultFields || []).find((candidate) => candidate.id === fieldId); if (!field) throw new NotFoundError(`Result Field not found: ${fieldId}`);
