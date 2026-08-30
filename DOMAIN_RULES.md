@@ -75,3 +75,59 @@
   destructive Settings operations. Import history records committed imports;
   Undo Last Import restores the state captured immediately before the latest
   import when that restore point is available.
+
+## Runtime boundaries and lifecycle
+
+- Definitions, Relationships, Activations, Occurrences, Runs, Periods and
+  Positions are separate records with separate responsibilities. A
+  Definition is reusable configuration; a Relationship is a contextual
+  connection; an Activation is the execution/scheduling gate; an Occurrence
+  is a scheduled opportunity; a Run is a finite execution instance; a Period
+  is an evaluation window; and a Position is a persistent ordered-runtime
+  pointer.
+- Definition status (`LIBRARY`, `ACTIVE`, `PAUSED`, `ARCHIVED`) does not
+  itself create daily runtime. New Runs and scheduled Action List Occurrences
+  are generated only through explicit, idempotent reconciliation and the
+  applicable Activation/schedule.
+- Action List relationships may create independent Occurrences. Routine,
+  Workflow, Project and Cycle children are owned by their type-specific Run or
+  generated slot runtime and are not turned into unrelated generic recurring
+  Occurrences. Existing legacy generic child Occurrences are retained and
+  marked with their legacy runtime boundary so migration does not erase data.
+- Routine Runs start with a fresh child snapshot and may become
+  `READY_TO_FINISH` before the user explicitly finishes. Workflow and Project
+  Runs retain ordered/outcome progress across date boundaries, while Cycle
+  Runs resolve generated Small Cycle slots and retain their Position and
+  Small/Big Cycle coverage.
+- Cycle appearance/resolution coverage and completion coverage are independent.
+  Completed and permitted skipped slots count as appeared/resolved; deferred
+  or unavailable slots return to the current generated position and do not
+  falsely count as appeared.
+
+## Deletion, recovery and historical integrity
+
+- Archive, Move to Bin and Permanent Delete are distinct. Archive keeps the
+  live definition, stable ID, references and History but removes it from active
+  use. Normal Delete means Move to Bin. Permanent Delete is the only
+  destructive definition operation.
+- Definition deletion is dependency-aware and atomic. The impact is calculated
+  before commit; Collections do not own their children; Category, Tag and Unit
+  dependents are not silently cascaded; and a failed validation leaves the
+  prior state unchanged.
+- Bin entries retain the stable ID, type, deletion time, prior status,
+  definition snapshot and dependency metadata. Restore reuses the same ID and
+  reports missing dependencies. Runtime records such as Action Logs, Runs and
+  Occurrences are not placed in the definition Bin; they can be explicitly
+  selected for semantically valid permanent deletion from Data Manager.
+- Permanent deletion and Clear Data may remove explicitly selected factual
+  runtime records only after an impact preview and restore point. Removing an
+  Action Log also detaches its runtime references and recalculates derived
+  completion without rewriting retained snapshots.
+- Historical Action Logs, Result Values, closed Period evaluations, completed
+  Runs, resolved Cycle slots and scope-change events remain readable through
+  snapshots/tombstones after live definitions, Result Fields, Tags or Units
+  are archived or deleted. One factual event remains one Action Log.
+- Full-state replacement imports, bulk permanent deletes, Empty Bin and
+  Clear Everything create restore points where possible and commit only after
+  candidate-state validation. Clear Everything boots a valid empty V3 state
+  with built-in Units and no demo content; it does not require JSON at startup.
