@@ -16,6 +16,7 @@ import { initializeProjectRuntime, updateProjectChild, evaluateProjectRun, creat
 import { evaluateWorkflowRun, initializeWorkflowRuntime } from "../domain/workflows.js";
 import { createActivation, pauseActivation as pauseDomainActivation, resumeActivation as resumeDomainActivation, recordActivationRun } from "../domain/activations.js";
 import { calculateTargetProgress } from "../domain/targets.js";
+import { calculatePeriodBounds } from "../shared/dates.js";
 import { advanceCyclePosition, createBigCycleRuntime, generateNextSmallCycle, currentGeneratedCycleSlot, advanceGeneratedCycleSlot, resolveCycleSlot as resolveDomainCycleSlot, recordCycleResolution } from "../domain/cycles.js";
 import { appendHistory } from "../domain/history.js";
 import { domainEvent, EVENT_TYPES } from "./events.js";
@@ -149,15 +150,63 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
       for (const log of (state.actionLogs || []).filter((candidate) => candidate.contextRefs?.some((reference) => reference.runId === run.id)).sort((a, b) => new Date(a.eventAt) - new Date(b.eventAt))) {
         for (const entry of log.resultValues || []) results[entry.fieldId] = entry.value;
       }
-      const targets = Object.fromEntries((state.blocks || []).filter((candidate) => candidate.type === "target").map((target) => {
-        try {
-          const progress = calculateTargetProgress({ target, logs: state.actionLogs || [], actions: state.actions || [], blocks: state.blocks || [], units: state.units || [], descendantBlockIds: target.config?.descendantBlockIds || [] });
-          return [target.id, { ...progress, reached: Boolean(progress.reached || progress.status === "reached" || progress.status === "REACHED") }];
-        } catch {
-          return [target.id, { reached: false }];
+      const targetBlocks = (state.blocks || []).filter((candidate) => candidate.type === "target");
+      const targetResults = new Map();
+      const visiting = new Set();
+      const resolveTarget = (targetId) => {
+        if (targetResults.has(targetId)) return targetResults.get(targetId);
+        const target = targetBlocks.find((candidate) => candidate.id === targetId);
+        if (!target) {
+          const missing = { targetId, reached: false, status: "INVALID", error: "Required Target is missing." };
+          targetResults.set(targetId, missing);
+          return missing;
         }
-      }));
-      return evaluateProjectRun({ project: source, run, now: now(), finished, results, resultFields, targets, units: state.units || [] });
+        if (visiting.has(targetId)) {
+          const cyclic = { targetId, reached: false, status: "INVALID", error: "Required Target dependency cycle." };
+          targetResults.set(targetId, cyclic);
+          return cyclic;
+        }
+        visiting.add(targetId);
+        const config = target.config || {};
+        const resultField = resultFields[config.sourceResultFieldId]
+          || Object.values(resultFields).find((field) => config.sourceResultTagId && field.resultTagId === config.sourceResultTagId)
+          || null;
+        const period = config.period && !["session", "all_time"].includes(config.period)
+          ? calculatePeriodBounds({
+            period: config.period,
+            style: config.periodStyle || "calendar",
+            at: now(),
+            timezone: config.timezone || state.settings?.timezone || "UTC",
+            weekStartsOn: config.weekStartsOn ?? state.settings?.weekStartsOn ?? 1,
+            rollingWindowDays: config.rollingWindowDays,
+            customStart: config.customStart,
+            customEnd: config.customEnd
+          })
+          : null;
+        const childResults = (config.requiredChildTargetIds || []).map((childId) => resolveTarget(childId));
+        let result;
+        try {
+          const progress = calculateTargetProgress({
+            target,
+            logs: state.actionLogs || [],
+            period,
+            actions: state.actions || [],
+            blocks: state.blocks || [],
+            units: state.units || [],
+            resultField,
+            childResults
+          });
+          result = { ...progress, reached: Boolean(progress.reached || progress.status === "reached" || progress.status === "REACHED") };
+        } catch (error) {
+          result = { targetId, reached: false, status: "INVALID", error: error.message };
+        }
+        visiting.delete(targetId);
+        targetResults.set(targetId, result);
+        return result;
+      };
+      for (const target of targetBlocks) resolveTarget(target.id);
+      const targets = Object.fromEntries(targetResults.entries());
+      return evaluateProjectRun({ project: source, run, now: now(), finished, results, resultFields, targets, units: state.units || [], manual: Boolean(run.runtime?.manualSatisfied) });
     }
     return { status: run.status, qualified: true, satisfied: true };
   }
@@ -584,16 +633,29 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         return clone(state.runs[index]);
       });
     },
-    updateProjectChild(runId, relationshipId, stateName, reason = null) {
+    updateProjectChild(runId, relationshipId, stateName, reason = null, options = {}) {
       return repository.transaction(() => {
         const state = repository.getState();
         const { index, item: run } = requireStateItem(state.runs, runId, "Run");
         const block = state.blocks.find((candidate) => candidate.id === run.blockId);
         if (!block || block.type !== "project") throw new ValidationError("Run is not a Project Run.");
-        const next = updateProjectChild({ run, relationshipId, state: stateName, reason, now: now() });
+        const next = updateProjectChild({ run, relationshipId, state: stateName, reason, expectedUnblockAt: options.expectedUnblockAt || null, now: now() });
         state.runs[index] = applyRunEvaluation(next, evaluateRun(next, block, false));
         touch();
-        addHistory({ type: "project", description: `Project child ${stateName}`, objectType: "run", objectId: runId, metadata: { relationshipId, state: stateName, reason } });
+        addHistory({ type: "project", description: `Project child ${stateName}`, objectType: "run", objectId: runId, metadata: { relationshipId, state: stateName, reason, expectedUnblockAt: options.expectedUnblockAt || null } });
+        return clone(state.runs[index]);
+      });
+    },
+    setProjectManual(runId, satisfied = true) {
+      return repository.transaction(() => {
+        const state = repository.getState();
+        const { index, item: run } = requireStateItem(state.runs, runId, "Run");
+        const block = state.blocks.find((candidate) => candidate.id === run.blockId);
+        if (!block || block.type !== "project") throw new ValidationError("Run is not a Project Run.");
+        const next = { ...run, runtime: { ...(run.runtime || {}), manualSatisfied: Boolean(satisfied), updatedAt: now().toISOString() }, updatedAt: now().toISOString() };
+        state.runs[index] = applyRunEvaluation(next, evaluateRun(next, block, false));
+        touch();
+        addHistory({ type: "project", description: (satisfied ? "Marked" : "Cleared") + " Project manual condition", objectType: "run", objectId: runId });
         return clone(state.runs[index]);
       });
     },
@@ -628,11 +690,14 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         const { index, item: run } = requireStateItem(state.runs, runId, "Run");
         const block = state.blocks.find((candidate) => candidate.id === run.blockId);
         if (!block || block.type !== "project") throw new ValidationError("Run is not a Project Run.");
-        const baseline = { relationships: run.runtime?.scopeBaseline || run.snapshot?.relationships || [] };
+        const baseline = {
+          relationships: run.runtime?.appliedScope || run.runtime?.scopeBaseline || run.snapshot?.relationships || [],
+          config: run.runtime?.appliedConfig || run.snapshot?.config || {}
+        };
         const actualChanges = changes.length ? changes : diffProjectScope(baseline, block);
         if (!actualChanges.length) throw new ValidationError("There are no Project scope changes to apply.");
         const next = applyDomainProjectScopeChange({ run, project: block, changes: actualChanges, now: now() });
-        state.runs[index] = next;
+        state.runs[index] = applyRunEvaluation(next, evaluateRun(next, block, false));
         state.scopeChangeEvents = [...(state.scopeChangeEvents || []), { id: makeId("scope_change"), blockId: block.id, runId, changedAt: now().toISOString(), changes: clone(actualChanges) }];
         touch();
         addHistory({ type: "project", description: "Applied Project scope change to active Run", objectType: "run", objectId: runId, metadata: { changes: clone(actualChanges) } });
@@ -649,6 +714,10 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         const { index, item: cycle } = requireStateItem(state.blocks, id, "Cycle");
         if (cycle.type !== "cycle") throw new ValidationError("Block is not a Cycle.");
         const runtime = ensureCycleRuntime(state, cycle);
+        const currentSlot = currentGeneratedCycleSlot(runtime.big, runtime.small);
+        const currentIndex = Number(runtime.big.currentSlot ?? -1);
+        const resolved = currentIndex >= 0 && (runtime.big.resolutions || []).some((entry) => entry.smallCycleId === runtime.small.id && Number(entry.slot) === currentIndex);
+        if (currentSlot && !resolved) throw new ValidationError("Resolve the current Cycle slot before advancing.");
         const moved = advanceGeneratedCycleSlot(runtime.big, runtime.small, { steps, now: now() });
         Object.assign(runtime.big, moved);
         state.cycleBigCycles[runtime.bigIndex] = runtime.big;
