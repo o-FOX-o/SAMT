@@ -189,12 +189,12 @@ test('Project Runs enforce dependencies, milestones, READY_TO_FINISH and preserv
   assert.equal(repository.getState().runs[0].status, 'IN_PROGRESS');
   engine.commands.completeProjectMilestone(run.id, 'milestone_launch');
   assert.equal(repository.getState().runs[0].status, 'READY_TO_FINISH');
-  engine.commands.finishRun(run.id);
-  assert.equal(repository.getState().runs[0].status, 'COMPLETED');
 
   const before = repository.getState().scopeChangeEvents.length;
   engine.commands.updateBlock(project.id, { config: { ...project.config, description: 'scope change' } });
   assert.equal(repository.getState().scopeChangeEvents.length, before + 1);
+  engine.commands.finishRun(run.id);
+  assert.equal(repository.getState().runs[0].status, 'COMPLETED');
 });
 
 test('Project Result conditions convert compatible Units and reject incompatible Units atomically', () => {
