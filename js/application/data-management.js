@@ -303,20 +303,25 @@ function filteredIds(state, type, options) {
 
 function removeLogs(state, ids, now = new Date()) {
   const removed = new Set(ids);
+  const affected = (state.occurrences || []).filter((occurrence) => (occurrence.logIds || []).some((id) => removed.has(id)));
   state.actionLogs = (state.actionLogs || []).filter((log) => !removed.has(log.id));
   for (const occurrence of state.occurrences || []) occurrence.logIds = (occurrence.logIds || []).filter((id) => !removed.has(id));
-  for (const occurrence of state.occurrences || []) {
+  for (const occurrence of affected) {
+    if (["skipped", "excused", "not_applicable"].includes(occurrence.status)) continue;
     const relationship = (state.blocks || []).flatMap((block) => block.relationships || []).find((item) => item.id === occurrence.relationshipId);
     const action = relationship?.kind === "action" ? state.actions.find((item) => item.id === relationship.refId) : null;
-    if (!["completed", "skipped", "excused", "not_applicable"].includes(occurrence.status)) {
-      occurrence.status = resolveOccurrenceStatus({
-        occurrence,
-        logs: state.actionLogs,
-        action,
-        now,
-        unfinishedPolicy: occurrence.snapshot?.unfinishedPolicy || relationship?.config?.unfinishedPolicy || "expire"
-      });
-    }
+    // Completion is derived from retained logs. Re-open a completed
+    // occurrence for an explicit log deletion, while preserving the
+    // occurrence's factual snapshot and all other history.
+    const candidate = occurrence.status === "completed" ? { ...occurrence, status: "due" } : occurrence;
+    occurrence.status = resolveOccurrenceStatus({
+      occurrence: candidate,
+      logs: state.actionLogs,
+      action,
+      now,
+      unfinishedPolicy: occurrence.snapshot?.unfinishedPolicy || relationship?.config?.unfinishedPolicy || "expire"
+    });
+    occurrence.updatedAt = now.toISOString();
   }
 }
 
