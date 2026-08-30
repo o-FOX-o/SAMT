@@ -116,7 +116,7 @@ export function evaluateWorkflowRun({ run, workflow = null, now = new Date(), fi
     let next = { ...step };
     const predecessorSatisfied = !predecessor || isWorkflowStepSatisfied(predecessor);
     if (next.state === "LOCKED" && predecessorSatisfied && next.availabilityMode !== "manual" && (!next.availableFrom || current >= new Date(next.availableFrom))) next.state = "AVAILABLE";
-    if (next.deadline && current >= new Date(next.deadline)) next = { ...next, state: "OVERDUE", overdueAt: next.overdueAt || current.toISOString() };
+    if (next.state !== "BLOCKED" && next.deadline && current >= new Date(next.deadline)) next = { ...next, state: "OVERDUE", overdueAt: next.overdueAt || current.toISOString() };
     return next;
   });
   const completion = resolveWorkflowCompletion({ steps }); const deadlineReached = Boolean(run?.deadline && current >= new Date(run.deadline));
