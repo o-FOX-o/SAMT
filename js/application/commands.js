@@ -12,7 +12,7 @@ import { resolveOccurrenceStatus } from "../domain/occurrences.js";
 import { createRun, startRun as startDomainRun, finishRun as finishDomainRun, pauseRun as pauseDomainRun, resumeRun as resumeDomainRun, cancelRun as cancelDomainRun, appendRunTransition } from "../domain/runs.js";
 import { returnToWorkflowStep as returnToDomainWorkflowStep, transitionWorkflowStep } from "../domain/workflows.js";
 import { initializeRoutineRuntime, updateRoutineChild, evaluateRoutineRun } from "../domain/routines.js";
-import { initializeProjectRuntime, updateProjectChild, evaluateProjectRun, createMilestone, updateMilestone, applyProjectScopeChange as applyDomainProjectScopeChange } from "../domain/projects.js";
+import { initializeProjectRuntime, updateProjectChild, evaluateProjectRun, createMilestone, updateMilestone, diffProjectScope, applyProjectScopeChange as applyDomainProjectScopeChange } from "../domain/projects.js";
 import { evaluateWorkflowRun, initializeWorkflowRuntime } from "../domain/workflows.js";
 import { createActivation, pauseActivation as pauseDomainActivation, resumeActivation as resumeDomainActivation, recordActivationRun } from "../domain/activations.js";
 import { calculateTargetProgress } from "../domain/targets.js";
@@ -605,11 +605,14 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
         const { index, item: run } = requireStateItem(state.runs, runId, "Run");
         const block = state.blocks.find((candidate) => candidate.id === run.blockId);
         if (!block || block.type !== "project") throw new ValidationError("Run is not a Project Run.");
-        const next = applyDomainProjectScopeChange({ run, project: block, changes, now: now() });
+        const baseline = { relationships: run.runtime?.scopeBaseline || run.snapshot?.relationships || [] };
+        const actualChanges = changes.length ? changes : diffProjectScope(baseline, block);
+        if (!actualChanges.length) throw new ValidationError("There are no Project scope changes to apply.");
+        const next = applyDomainProjectScopeChange({ run, project: block, changes: actualChanges, now: now() });
         state.runs[index] = next;
-        state.scopeChangeEvents = [...(state.scopeChangeEvents || []), { id: makeId("scope_change"), blockId: block.id, runId, changedAt: now().toISOString(), changes: clone(changes) }];
+        state.scopeChangeEvents = [...(state.scopeChangeEvents || []), { id: makeId("scope_change"), blockId: block.id, runId, changedAt: now().toISOString(), changes: clone(actualChanges) }];
         touch();
-        addHistory({ type: "project", description: "Applied Project scope change to active Run", objectType: "run", objectId: runId, metadata: { changes: clone(changes) } });
+        addHistory({ type: "project", description: "Applied Project scope change to active Run", objectType: "run", objectId: runId, metadata: { changes: clone(actualChanges) } });
         return clone(next);
       });
     },
