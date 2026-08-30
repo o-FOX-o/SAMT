@@ -496,3 +496,40 @@ test('explicit Action Log deletion cleans runtime references and reopens derived
   assert.equal(current.runs[0].children[0].state, 'AVAILABLE');
   assert.equal(current.runs[0].status, 'NOT_STARTED');
 });
+
+test('Weighted Cycle runtime resolves the generated slot and carries fairness forward', () => {
+  const { repository, engine } = harness();
+  const lowAction = action(engine, 'action_cycle_weight_low', 'Low weight');
+  const highAction = action(engine, 'action_cycle_weight_high', 'High weight');
+  const cycle = engine.commands.createBlock({
+    id: 'block_cycle_weighted',
+    type: 'cycle',
+    name: 'Weighted cycle',
+    definitionStatus: 'ACTIVE',
+    config: { generationMode: 'weighted_limited', smallCycleSize: 1 }
+  });
+  const low = engine.commands.addRelationship(cycle.id, {
+    id: 'relationship_cycle_weight_low',
+    kind: 'action',
+    refId: lowAction.id,
+    config: { appearanceMode: 'weighted', weight: 1, manualCompletion: true }
+  });
+  const high = engine.commands.addRelationship(cycle.id, {
+    id: 'relationship_cycle_weight_high',
+    kind: 'action',
+    refId: highAction.id,
+    config: { appearanceMode: 'weighted', weight: 4, manualCompletion: true }
+  });
+
+  const first = engine.commands.generateCycleSmallCycle(cycle.id);
+  assert.equal(first.slots[0].relationshipId, high.id);
+  assert.notEqual(first.slots[0].relationshipId, low.id);
+  const resolved = engine.commands.resolveCycleSlot(cycle.id, { outcome: 'completed' });
+  assert.equal(resolved.resolution.relationshipId, high.id);
+  assert.equal(repository.getState().cycleBigCycles[0].currentSlot, 1);
+
+  const second = engine.commands.generateCycleSmallCycle(cycle.id);
+  assert.equal(second.smallCycleNumber, 2);
+  assert.equal(second.slots[0].relationshipId, high.id);
+  assert.notEqual(second.fairness[high.id], first.fairness[high.id]);
+});
