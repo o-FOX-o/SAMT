@@ -20,7 +20,7 @@ export function isScheduleDue({ schedule = {}, at, timezone = "UTC" } = {}) {
     const timeMatch = String(schedule.time || String(raw).match(/T(\d{2}:\d{2})/)?.[1] || "").match(/^(\d{2}):(\d{2})/);
     if (!timeMatch) return true;
     const actualParts = partsInTimeZone(at, timezone);
-    return Number(timeMatch[1]) === actualParts.hour && Number(timeMatch[2]) === actualParts.minute;
+    return actualParts.hour * 60 + actualParts.minute >= Number(timeMatch[1]) * 60 + Number(timeMatch[2]);
   }
   if (mode === "calendar") {
     if (schedule.startDate && date < schedule.startDate || schedule.endDate && date > schedule.endDate) return false;
@@ -57,7 +57,7 @@ function timeMatches(time, value, timezone) {
   const match = String(time || "").match(/^(\d{2}):(\d{2})/);
   if (!match) return true;
   const parts = partsInTimeZone(value, timezone);
-  return Number(match[1]) === parts.hour && Number(match[2]) === parts.minute;
+  return parts.hour * 60 + parts.minute >= Number(match[1]) * 60 + Number(match[2]);
 }
 
 export function nextScheduledDate({ from, schedule = {}, timezone = "UTC" } = {}) {
