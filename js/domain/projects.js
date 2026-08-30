@@ -54,10 +54,11 @@ export function initializeProjectRuntime({ project = {}, now = new Date() } = {}
   const stamp = new Date(now).toISOString();
   const children = projectRelationships(project).map((relationship, position) => {
     const config = relationship.config || {}; const dependencyIds = [...new Set(config.dependsOnRelationshipIds || config.dependencyIds || config.dependsOn || [])];
-    return { id: relationship.id, relationshipId: relationship.id, kind: relationship.kind, refId: relationship.refId, label: relationship.label || null, position, required: config.required !== false, dependencyIds, allowSkip: config.allowSkip === true, requireSkipReason: config.requireSkipReason === true, allowExcuse: config.allowExcuse === true || config.excuseAllowed === true, allowNotApplicable: config.allowNotApplicable === true || config.allowNA === true, availableFrom: config.availableFrom || config.timing?.availableFrom || null, deadline: config.deadline || config.timing?.deadline || null, state: dependencyIds.length ? "LOCKED" : "AVAILABLE", reason: null, logIds: [], createdAt: stamp, updatedAt: stamp };
+    return { id: relationship.id, relationshipId: relationship.id, kind: relationship.kind, refId: relationship.refId, label: relationship.label || null, position, required: config.required !== false, dependencyIds, allowSkip: config.allowSkip === true, requireSkipReason: config.requireSkipReason === true, allowExcuse: config.allowExcuse === true || config.excuseAllowed === true, allowNotApplicable: config.allowNotApplicable === true || config.allowNA === true, availableFrom: config.availableFrom || config.timing?.availableFrom || null, deadline: config.deadline || config.timing?.deadline || null, expectedUnblockAt: config.expectedUnblockAt || config.timing?.expectedUnblockAt || null, state: dependencyIds.length ? "LOCKED" : "AVAILABLE", reason: null, logIds: [], createdAt: stamp, updatedAt: stamp };
   });
-  const milestones = (projectConfig(project).milestones || []).map((milestone, index) => createMilestone({ ...milestone, id: milestone.id || "milestone_" + (index + 1), now }));
-  return { type: "project", children, milestones, conditions: clone(projectConfig(project).conditions || [{ type: "all_required" }]), plannedStart: projectConfig(project).plannedStart || null, actualStart: null, scopeBaseline: clone(projectRelationships(project)), startedAt: stamp, updatedAt: stamp };
+  const config = projectConfig(project);
+  const configuredMilestones = (config.milestones || []).map((milestone, index) => createMilestone({ ...milestone, id: milestone.id || "milestone_" + (index + 1), now }));
+  return { type: "project", children, milestones: configuredMilestones, conditions: clone(config.conditions || [{ type: "all_required" }]), combination: config.combination || "all", manualSatisfied: false, plannedStart: config.plannedStart || null, actualStart: null, scopeBaseline: clone(projectRelationships(project)), appliedScope: clone(projectRelationships(project)), appliedConfig: clone(config), startedAt: stamp, updatedAt: stamp };
 }
 
 export function projectProgressFromRun(run = {}) {
@@ -92,22 +93,30 @@ export function evaluateProjectRun({ project = null, run = null, required = [], 
   const runtimeMilestones = Array.isArray(run?.runtime?.milestones)
     ? Object.fromEntries(run.runtime.milestones.map((milestone) => [milestone.id, milestone]))
     : (run?.runtime?.milestones || {});
+  const requiredItems = progress.required || required || [];
+  const requiredSatisfied = requiredItems.every((item) => item.satisfied ?? isSatisfied(item));
+  const evaluatedMilestones = { ...runtimeMilestones, ...milestones };
+  const requiredMilestones = Object.values(evaluatedMilestones).filter((milestone) => milestone.required === true);
+  const milestonesSatisfied = requiredMilestones.every((milestone) => milestone.satisfied ?? milestone.status === "completed");
+  const manualSatisfied = manual || Boolean(run?.runtime?.manualSatisfied) || Boolean(finished && config.completionMode === "manual");
   const conditionResult = evaluateProjectConditions({
     conditions: config.conditions || [{ type: "all_required" }],
     context: {
-      required: progress.required || required,
+      required: requiredItems,
       completedCount: progress.completedCount ?? completedCount,
       completedPercentage: progress.completedPercentage ?? completedPercentage,
       targets,
       results,
-      milestones: { ...runtimeMilestones, ...milestones },
-      manual,
+      milestones: evaluatedMilestones,
+      manual: manualSatisfied,
       resultFields,
       units
     },
     combination: config.combination || "all"
   });
-  const qualified = conditionResult.satisfied;
+  // Required relationships and required milestones remain mandatory even when
+  // the configured condition combination is ANY or uses a count/percentage threshold.
+  const qualified = requiredSatisfied && milestonesSatisfied && conditionResult.satisfied;
   const deadline = run?.deadline || config.deadline || null;
   const deadlineReached = Boolean(deadline && new Date(now) >= new Date(deadline));
   const finishBehaviour = config.finishBehaviour || "ready";
@@ -117,10 +126,10 @@ export function evaluateProjectRun({ project = null, run = null, required = [], 
   else if (deadlineReached && config.deadlinePolicy === "hard_expiry") status = "EXPIRED";
   else if (deadlineReached) status = "OVERDUE";
   else if ((progress.completedCount ?? completedCount) > 0 || (progress.completedPercentage ?? completedPercentage) > 0) status = "IN_PROGRESS";
-  return { ...conditionResult, qualified, readyToFinish: qualified && status === "READY_TO_FINISH", progress, children: evaluatedChildren, status, deadlineReached };
+  return { ...conditionResult, qualified, requiredSatisfied, milestonesSatisfied, readyToFinish: qualified && status === "READY_TO_FINISH", progress, children: evaluatedChildren, status, deadlineReached };
 }
 
-export function updateProjectChild({ run, relationshipId, state, logId = null, reason = null, now = new Date() } = {}) {
+export function updateProjectChild({ run, relationshipId, state, logId = null, reason = null, expectedUnblockAt = null, now = new Date() } = {}) {
   if (!run || !relationshipId || !PROJECT_CHILD_STATES.includes(state)) throw new ValidationError("Project child update is invalid.");
   const stamp = new Date(now).toISOString(); const source = run.children || run.runtime?.children || []; const current = source.find((child) => child.relationshipId === relationshipId || child.id === relationshipId);
   if (!current) throw new ValidationError("Project child does not exist.");
@@ -133,26 +142,46 @@ export function updateProjectChild({ run, relationshipId, state, logId = null, r
   if (state === "SKIPPED" && current.requireSkipReason && !String(reason || "").trim()) throw new ValidationError("A skip reason is required.");
   if (state === "EXCUSED" && current.allowExcuse !== true) throw new ValidationError("Excusing this Project child is not allowed.");
   if (state === "NOT_APPLICABLE" && current.allowNotApplicable !== true) throw new ValidationError("Marking this Project child not applicable is not allowed.");
-  const children = source.map((child) => child.relationshipId === relationshipId || child.id === relationshipId ? { ...child, state, logIds: logId ? [...new Set([...(child.logIds || []), logId])] : [...(child.logIds || [])], reason: reason || null, updatedAt: stamp } : child);
+  if (state === "BLOCKED" && !String(reason || "").trim()) throw new ValidationError("Blocked Project children require a reason.");
+  if (expectedUnblockAt != null && Number.isNaN(new Date(expectedUnblockAt).getTime())) throw new ValidationError("Expected unblock date is invalid.");
+  if (state === "AVAILABLE" && (current.dependencyIds || []).some((id) => !source.some((child) => (child.relationshipId || child.id) === id && isSatisfied(child)))) throw new ValidationError("This Project child is still locked by an unresolved dependency.");
+  const children = source.map((child) => child.relationshipId === relationshipId || child.id === relationshipId ? { ...child, state, logIds: logId ? [...new Set([...(child.logIds || []), logId])] : [...(child.logIds || [])], reason: reason || null, expectedUnblockAt: state === "BLOCKED" ? (expectedUnblockAt ? new Date(expectedUnblockAt).toISOString() : null) : state === "AVAILABLE" ? null : child.expectedUnblockAt || null, blockedAt: state === "BLOCKED" ? (child.blockedAt || stamp) : child.blockedAt || null, updatedAt: stamp } : child);
   const dependencyIds = new Set(children.filter(isSatisfied).map((child) => child.relationshipId || child.id)); const unlocked = children.map((child) => child.state === "LOCKED" && (child.dependencyIds || []).every((id) => dependencyIds.has(id)) ? { ...child, state: "AVAILABLE" } : child);
   return { ...run, children: unlocked, runtime: { ...(run.runtime || {}), type: "project", children: clone(unlocked), progress: projectProgressFromRun({ children: unlocked }), updatedAt: stamp }, updatedAt: stamp };
 }
 
 export function applyProjectScopeChange({ run, project, changes = [], now = new Date() } = {}) {
   if (!run || !project) throw new ValidationError("Project scope change requires a Run and Project.");
-  const stamp = new Date(now).toISOString(); const relationships = projectRelationships(project); const byId = new Map(relationships.map((relationship) => [relationship.id, relationship]));
+  const stamp = new Date(now).toISOString();
+  const relationships = projectRelationships(project);
+  const currentConfig = projectConfig(project);
+  const byId = new Map(relationships.map((relationship) => [relationship.id, relationship]));
   let children = (run.children || run.runtime?.children || []).map((child) => {
-    const relationship = byId.get(child.relationshipId || child.id); if (!relationship) return { ...child, required: false, scopeRemoved: true, scopeRemovedAt: child.scopeRemovedAt || stamp, state: child.state === "COMPLETED" ? child.state : "CANCELLED", updatedAt: stamp };
+    const relationship = byId.get(child.relationshipId || child.id);
+    if (!relationship) return { ...child, required: false, scopeRemoved: true, scopeRemovedAt: child.scopeRemovedAt || stamp, state: child.state === "COMPLETED" ? child.state : "CANCELLED", updatedAt: stamp };
     const config = relationship.config || {};
-    return { ...child, label: relationship.label || child.label || null, required: config.required !== false, dependencyIds: [...new Set(config.dependsOnRelationshipIds || config.dependencyIds || config.dependsOn || child.dependencyIds || [])], allowSkip: config.allowSkip === true, requireSkipReason: config.requireSkipReason === true, allowExcuse: config.allowExcuse === true || config.excuseAllowed === true, allowNotApplicable: config.allowNotApplicable === true || config.allowNA === true, availableFrom: config.availableFrom || config.timing?.availableFrom || null, deadline: config.deadline || config.timing?.deadline || null, scopeUpdatedAt: stamp, updatedAt: stamp };
+    return { ...child, label: relationship.label || child.label || null, required: config.required !== false, dependencyIds: [...new Set(config.dependsOnRelationshipIds || config.dependencyIds || config.dependsOn || child.dependencyIds || [])], allowSkip: config.allowSkip === true, requireSkipReason: config.requireSkipReason === true, allowExcuse: config.allowExcuse === true || config.excuseAllowed === true, allowNotApplicable: config.allowNotApplicable === true || config.allowNA === true, availableFrom: config.availableFrom || config.timing?.availableFrom || null, deadline: config.deadline || config.timing?.deadline || null, expectedUnblockAt: config.expectedUnblockAt || config.timing?.expectedUnblockAt || child.expectedUnblockAt || null, scopeUpdatedAt: stamp, updatedAt: stamp };
   });
   for (const relationship of relationships) if (!children.some((child) => child.relationshipId === relationship.id)) {
     const config = relationship.config || {};
-    children.push({ id: relationship.id, relationshipId: relationship.id, kind: relationship.kind, refId: relationship.refId, label: relationship.label || null, position: children.length, required: config.required !== false, dependencyIds: [...new Set(config.dependsOnRelationshipIds || config.dependencyIds || config.dependsOn || [])], allowSkip: config.allowSkip === true, requireSkipReason: config.requireSkipReason === true, allowExcuse: config.allowExcuse === true || config.excuseAllowed === true, allowNotApplicable: config.allowNotApplicable === true || config.allowNA === true, availableFrom: config.availableFrom || config.timing?.availableFrom || null, deadline: config.deadline || config.timing?.deadline || null, state: "AVAILABLE", reason: null, logIds: [], createdAt: stamp, updatedAt: stamp });
+    const dependencyIds = [...new Set(config.dependsOnRelationshipIds || config.dependencyIds || config.dependsOn || [])];
+    children.push({ id: relationship.id, relationshipId: relationship.id, kind: relationship.kind, refId: relationship.refId, label: relationship.label || null, position: children.length, required: config.required !== false, dependencyIds, allowSkip: config.allowSkip === true, requireSkipReason: config.requireSkipReason === true, allowExcuse: config.allowExcuse === true || config.excuseAllowed === true, allowNotApplicable: config.allowNotApplicable === true || config.allowNA === true, availableFrom: config.availableFrom || config.timing?.availableFrom || null, deadline: config.deadline || config.timing?.deadline || null, expectedUnblockAt: config.expectedUnblockAt || config.timing?.expectedUnblockAt || null, state: dependencyIds.length ? "LOCKED" : "AVAILABLE", reason: null, logIds: [], createdAt: stamp, updatedAt: stamp });
   }
-  children = children.map((child) => child.state === "AVAILABLE" && child.dependencyIds?.length ? { ...child, state: "LOCKED" } : child);
+  const satisfiedIds = new Set(children.filter(isSatisfied).map((child) => child.relationshipId || child.id));
+  children = children.map((child) => child.state === "AVAILABLE" && (child.dependencyIds || []).some((id) => !satisfiedIds.has(id)) ? { ...child, state: "LOCKED" } : child);
+  const existingMilestones = Array.isArray(run.runtime?.milestones) ? run.runtime.milestones : [];
+  const configuredMilestones = Array.isArray(currentConfig.milestones) ? currentConfig.milestones : [];
+  const configuredIds = new Set(configuredMilestones.map((milestone) => milestone.id).filter(Boolean));
+  const milestones = configuredMilestones.map((milestone, index) => {
+    const id = milestone.id || "milestone_" + (index + 1);
+    const previous = existingMilestones.find((candidate) => candidate.id === id);
+    return previous ? { ...previous, ...clone(milestone), id, status: previous.status, createdAt: previous.createdAt || stamp, updatedAt: stamp } : createMilestone({ ...milestone, id, now });
+  });
+  for (const previous of existingMilestones) if (!configuredIds.has(previous.id)) milestones.push({ ...previous, scopeRemoved: true, status: previous.status === "completed" ? previous.status : "cancelled", removedAt: previous.removedAt || stamp, updatedAt: stamp });
+  const previousConfig = run.runtime?.appliedConfig || run.snapshot?.config || {};
+  const nextDeadline = Object.prototype.hasOwnProperty.call(currentConfig, "deadline") ? currentConfig.deadline : run.deadline;
   const scopeChanges = [...(run.runtime?.scopeChanges || []), ...changes.map((change) => ({ ...clone(change), changedAt: stamp }))];
-  return { ...run, children, runtime: { ...(run.runtime || {}), type: "project", children: clone(children), progress: projectProgressFromRun({ children }), scopeBaseline: run.runtime?.scopeBaseline || clone(run.snapshot?.relationships || []), scopeChanges, updatedAt: stamp }, updatedAt: stamp };
+  return { ...run, deadline: nextDeadline, children, runtime: { ...(run.runtime || {}), type: "project", children: clone(children), progress: projectProgressFromRun({ children }), milestones, conditions: clone(currentConfig.conditions || run.runtime?.conditions || [{ type: "all_required" }]), combination: currentConfig.combination || run.runtime?.combination || "all", plannedStart: currentConfig.plannedStart || run.runtime?.plannedStart || null, scopeBaseline: run.runtime?.scopeBaseline || clone(run.snapshot?.relationships || []), appliedScope: clone(relationships), appliedConfig: clone(currentConfig), previousAppliedConfig: clone(previousConfig), scopeChanges, updatedAt: stamp }, updatedAt: stamp };
 }
 
 export function updateMilestone({ run, milestoneId, patch = {}, now = new Date() } = {}) {
@@ -162,9 +191,14 @@ export function updateMilestone({ run, milestoneId, patch = {}, now = new Date()
 }
 
 export function diffProjectScope(before = {}, after = {}) {
-  const beforeRelationships = new Map(projectRelationships(before).map((relationship) => [relationship.id, relationship])); const afterRelationships = new Map(projectRelationships(after).map((relationship) => [relationship.id, relationship])); const changes = [];
+  const beforeRelationships = new Map(projectRelationships(before).map((relationship) => [relationship.id, relationship]));
+  const afterRelationships = new Map(projectRelationships(after).map((relationship) => [relationship.id, relationship]));
+  const changes = [];
   for (const [id, relationship] of afterRelationships) if (!beforeRelationships.has(id)) changes.push({ type: "relationship_added", relationshipId: id, after: clone(relationship) });
   for (const [id, relationship] of beforeRelationships) if (!afterRelationships.has(id)) changes.push({ type: "relationship_removed", relationshipId: id, before: clone(relationship) });
   for (const [id, relationship] of afterRelationships) if (beforeRelationships.has(id) && JSON.stringify(beforeRelationships.get(id)) !== JSON.stringify(relationship)) changes.push({ type: "relationship_changed", relationshipId: id, before: clone(beforeRelationships.get(id)), after: clone(relationship) });
+  const beforeConfig = projectConfig(before);
+  const afterConfig = projectConfig(after);
+  if (JSON.stringify(beforeConfig) !== JSON.stringify(afterConfig)) changes.push({ type: "config_changed", before: clone(beforeConfig), after: clone(afterConfig) });
   return changes;
 }
