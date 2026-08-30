@@ -34,6 +34,7 @@ test('Routine Runs initialize fresh children, aggregate logs and stop at READY_T
 
   const first = engine.commands.startRun({ blockId: routine.id, label: 'First session' });
   assert.equal(first.children[0].state, 'AVAILABLE');
+  console.log('DEBUG START', first.status, repository.getState().runs[0].status);
   engine.commands.logAction({
     actionId: item.id,
     runId: first.id,
