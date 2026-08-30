@@ -275,13 +275,23 @@ export function mountSamtApp(engine, documentRef = globalThis.document) {
     } else if (type === "workflow") {
       Object.assign(config, { finishBehaviour: data.get("config.finishBehaviour") || "auto", progression: data.get("config.progression") || "ordered", deadline: data.get("config.deadline") || null });
     } else if (type === "project") {
-      const conditionType = data.get("config.conditionType") || "all_required";
-      const condition = { type: conditionType };
-      if (["count", "percentage"].includes(conditionType)) condition.value = Number(data.get("config.conditionValue") || 0);
-      if (conditionType === "target") condition.targetId = data.get("config.conditionTargetId") || null;
-      if (conditionType === "milestone") condition.milestoneId = data.get("config.conditionMilestoneId") || null;
-      if (conditionType === "result") Object.assign(condition, { fieldId: data.get("config.conditionFieldId") || null, operator: data.get("config.conditionOperator") || ">=", value: data.get("config.conditionValue") || "", unitId: data.get("config.conditionUnitId") || null });
-      Object.assign(config, { combination: data.get("config.combination") || "all", finishBehaviour: data.get("config.finishBehaviour") || "ready", deadline: data.get("config.deadline") || null, deadlinePolicy: data.get("config.deadlinePolicy") || "continue_overdue", conditions: [condition] });
+      const conditionTypes = data.getAll("config.conditionType");
+      const values = data.getAll("config.conditionValue");
+      const targetIds = data.getAll("config.conditionTargetId");
+      const fieldIds = data.getAll("config.conditionFieldId");
+      const resultTagIds = data.getAll("config.conditionResultTagId");
+      const operators = data.getAll("config.conditionOperator");
+      const unitIds = data.getAll("config.conditionUnitId");
+      const milestoneIds = data.getAll("config.conditionMilestoneId");
+      const conditions = (conditionTypes.length ? conditionTypes : ["all_required"]).map((conditionType, index) => {
+        const condition = { type: conditionType };
+        if (["count", "percentage"].includes(conditionType)) condition.value = Number(values[index] || 0);
+        if (conditionType === "target") condition.targetId = targetIds[index] || null;
+        if (conditionType === "milestone") condition.milestoneId = milestoneIds[index] || null;
+        if (conditionType === "result") Object.assign(condition, { fieldId: fieldIds[index] || null, resultTagId: resultTagIds[index] || null, operator: operators[index] || ">=", value: values[index] || "", unitId: unitIds[index] || null });
+        return condition;
+      });
+      Object.assign(config, { combination: data.get("config.combination") || "all", finishBehaviour: data.get("config.finishBehaviour") || "ready", deadline: data.get("config.deadline") || null, deadlinePolicy: data.get("config.deadlinePolicy") || "continue_overdue", conditions });
     } else if (type === "action_list") Object.assign(config, { occurrencePolicy: data.get("config.occurrencePolicy") || "expire", listMode: data.get("config.listMode") || "open_ended" });
     return config;
   }
@@ -489,6 +499,22 @@ export function mountSamtApp(engine, documentRef = globalThis.document) {
       return;
     }
     if (action === "remove-choice-option") { target.closest("[data-choice-row]")?.remove(); return; }
+    if (action === "add-project-condition") {
+      const list = target.closest("form")?.querySelector("[data-condition-list]");
+      const template = list?.querySelector("[data-condition-row]");
+      if (!list || !template) return;
+      const row = template.cloneNode(true);
+      row.querySelectorAll("select").forEach((select) => { select.selectedIndex = 0; });
+      row.querySelectorAll("input").forEach((input) => { input.value = ""; });
+      list.append(row);
+      return;
+    }
+    if (action === "remove-project-condition") {
+      const list = target.closest("form")?.querySelector("[data-condition-list]");
+      const rows = list?.querySelectorAll("[data-condition-row]") || [];
+      if (rows.length > 1) target.closest("[data-condition-row]")?.remove();
+      return;
+    }
     if (action === "add-choice-option") {
       const container = target.closest("form")?.querySelector("[data-choice-options]");
       if (!container) return;
