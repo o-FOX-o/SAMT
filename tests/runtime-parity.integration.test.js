@@ -44,6 +44,7 @@ test('Routine Runs initialize fresh children, aggregate logs and stop at READY_T
     finalizing: true
   });
   assert.equal(repository.getState().runs[0].children[0].state, 'IN_PROGRESS');
+  console.log('DEBUG PARTIAL', repository.getState().runs[0].status);
 
   engine.commands.logAction({
     actionId: item.id,
