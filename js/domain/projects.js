@@ -124,6 +124,8 @@ export function updateProjectChild({ run, relationshipId, state, logId = null, r
   if (!run || !relationshipId || !PROJECT_CHILD_STATES.includes(state)) throw new ValidationError("Project child update is invalid.");
   const stamp = new Date(now).toISOString(); const source = run.children || run.runtime?.children || []; const current = source.find((child) => child.relationshipId === relationshipId || child.id === relationshipId);
   if (!current) throw new ValidationError("Project child does not exist.");
+  const availableAt = current.availableFrom && Number.isFinite(new Date(current.availableFrom).getTime()) ? new Date(current.availableFrom) : null;
+  if (current.available === false || availableAt && new Date(now) < availableAt) throw new ValidationError("This Project child is not available yet.");
   if (["COMPLETED", "SKIPPED", "EXCUSED", "NOT_APPLICABLE"].includes(current.state) && state !== current.state) throw new ValidationError("A terminal Project child must be reopened explicitly.");
   if (["COMPLETED", "SKIPPED", "EXCUSED", "NOT_APPLICABLE"].includes(state) && current.state === "LOCKED") throw new ValidationError("This Project child is locked by an unresolved dependency or availability rule.");
   if (state === "SKIPPED" && current.required) throw new ValidationError("Required Project children cannot be skipped.");
