@@ -18,5 +18,5 @@ export function evaluateAvoidPeriod({ mode = "binary_limit", actual = 0, allowed
 
 export function evaluateAvoidFromLogs({ actionId, logs = [], period, config } = {}) {
   const selected = aggregateLogsUnique(logs, (log) => log.actionId === actionId && (!period || (!period.start || new Date(log.eventAt) >= new Date(period.start)) && (!period.end || new Date(log.eventAt) < new Date(period.end))));
-  const actual = selected.reduce((sum, log) => sum + finiteNumber(log.durationMinutes), 0); return { ...evaluateAvoidPeriod({ ...config, actual, violations: config?.metric === "count" ? selected.length : config?.violations }), logs: selected };
+  const actual = config?.metric === "count" ? selected.length : selected.reduce((sum, log) => sum + finiteNumber(log.durationMinutes), 0); return { ...evaluateAvoidPeriod({ ...config, actual, violations: config?.metric === "count" ? selected.length : config?.violations }), logs: selected };
 }
