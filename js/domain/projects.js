@@ -19,29 +19,58 @@ export function evaluateProjectCondition(condition = {}, context = {}) {
   if (condition.type === "target") return Boolean(context.targets?.[condition.targetId]?.reached);
   if (condition.type === "milestone") return Boolean(context.milestones?.[condition.milestoneId]?.satisfied ?? context.milestones?.[condition.milestoneId]?.status === "completed");
   if (condition.type === "result") {
-    const field = context.resultFields?.[condition.fieldId] || Object.values(context.resultFields || {}).find((candidate) => condition.resultTagId && candidate.resultTagId === condition.resultTagId);
+    const field = context.resultFields?.[condition.fieldId]
+      || Object.values(context.resultFields || {}).find((candidate) => condition.resultTagId && candidate.resultTagId === condition.resultTagId);
     const actualEntry = field ? context.results?.[field.id] : context.results?.[condition.fieldId];
     const actual = resultValue(actualEntry);
     if (actual == null) return false;
+    const operator = condition.operator || "=";
+    if (field?.type === "text") {
+      if (operator !== "=") return false;
+      return String(actual) === String(condition.value ?? "");
+    }
     if (field?.type === "choice") {
       const config = normalizeResultConfig(field);
-      if (condition.operator === "=" || condition.operator == null) { const left = Array.isArray(actual) ? [...actual].sort() : [actual]; const right = Array.isArray(condition.value) ? [...condition.value].sort() : [condition.value]; return left.length === right.length && left.every((value, index) => value === right[index]); }
+      if (operator === "=") {
+        const left = Array.isArray(actual) ? actual : [actual];
+        const right = Array.isArray(condition.value) ? condition.value : [condition.value];
+        const comparableLeft = config.orderMatters ? left : [...left].sort();
+        const comparableRight = config.orderMatters ? right : [...right].sort();
+        return comparableLeft.length === comparableRight.length && comparableLeft.every((value, index) => value === comparableRight[index]);
+      }
       if (!config.orderMatters || config.betterDirection === "none") return false;
-      const left = choiceAnalyticalValue(field, actual); const right = choiceAnalyticalValue(field, condition.value); return left != null && right != null && compareValues(left, condition.operator || ">=", right);
+      if (Array.isArray(actual) || Array.isArray(condition.value)) return false;
+      const left = choiceAnalyticalValue(field, actual);
+      const right = choiceAnalyticalValue(field, condition.value);
+      return left != null && right != null && compareValues(left, operator, right);
     }
-    if (field?.type === "measurement" && actualEntry && typeof actualEntry === "object") {
-      const expectedUnit = condition.unitId || field.config?.defaultUnitId; const actualUnit = actualEntry.unitId || field.config?.defaultUnitId; const units = context.units || [];
-      if (expectedUnit && actualUnit) { const map = unitMap(units); if (!map.has(expectedUnit) || !map.has(actualUnit) || !isCompatible(actualUnit, expectedUnit, units)) throw new ValidationError("Project Result condition uses incompatible Units."); }
-      const value = expectedUnit && actualUnit ? convertValue(actualEntry.value, actualUnit, expectedUnit, units) : Number(actualEntry.value);
-      return Number.isFinite(value) && compareValues(value, condition.operator || ">=", finiteNumber(condition.value));
+    if (field?.type === "measurement") {
+      if (!actualEntry || typeof actualEntry !== "object" || actualEntry.value == null) {
+        throw new ValidationError("Project Result condition requires a measurement value with a Unit.");
+      }
+      const expectedValue = condition.value && typeof condition.value === "object" ? condition.value.value : condition.value;
+      const expectedUnit = condition.unitId || condition.value?.unitId || field.config?.defaultUnitId;
+      const actualUnit = actualEntry.unitId || field.config?.defaultUnitId;
+      const units = context.units || [];
+      if (!expectedUnit || !actualUnit) throw new ValidationError("Project Result condition requires compatible Units.");
+      const map = unitMap(units);
+      if (!map.has(expectedUnit) || !map.has(actualUnit) || !isCompatible(actualUnit, expectedUnit, units)) {
+        throw new ValidationError("Project Result condition uses incompatible Units.");
+      }
+      const value = convertValue(actualEntry.value, actualUnit, expectedUnit, units);
+      const expected = finiteNumber(expectedValue, NaN);
+      return Number.isFinite(value) && Number.isFinite(expected) && compareValues(value, operator, expected);
     }
-    return compareValues(typeof actual === "number" ? actual : finiteNumber(actual, NaN), condition.operator || ">=", finiteNumber(condition.value));
+    const left = typeof actual === "number" ? actual : finiteNumber(actual, NaN);
+    const right = finiteNumber(condition.value, NaN);
+    return Number.isFinite(left) && Number.isFinite(right) && compareValues(left, operator, right);
   }
   if (condition.type === "manual") return Boolean(context.manual);
   return false;
 }
 
 export function evaluateProjectConditions({ conditions = [], context = {}, combination = "all" } = {}) {
+  if (!["all", "any"].includes(combination)) throw new ValidationError("Project condition combination is invalid.");
   const results = conditions.map((condition) => ({ condition, satisfied: evaluateProjectCondition(condition, context) }));
   return { satisfied: combination === "any" ? results.some((result) => result.satisfied) : results.every((result) => result.satisfied), results };
 }
