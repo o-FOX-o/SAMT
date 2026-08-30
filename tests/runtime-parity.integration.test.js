@@ -52,6 +52,7 @@ test('Routine Runs initialize fresh children, aggregate logs and stop at READY_T
     eventAt: clock.now(),
     finalizing: true
   });
+  console.log('DEBUG ROUTINE', JSON.stringify(repository.getState().runs[0]));
   assert.equal(repository.getState().runs[0].status, 'READY_TO_FINISH');
   engine.commands.finishRun(first.id);
   assert.equal(repository.getState().runs[0].status, 'COMPLETED');
