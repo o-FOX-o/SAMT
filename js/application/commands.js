@@ -108,19 +108,44 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
     return snapshot;
   }
 
-  function initializeRuntimeForBlock(block, snapshot, stamp) {
+  function initializeRuntimeForBlock(state, block, snapshot, stamp, ancestors = new Set()) {
     const source = { ...clone(block), ...(clone(snapshot.block) || {}), relationships: clone(snapshot.relationships || block.relationships || []) };
-    if (block.type === "routine") return initializeRoutineRuntime({ routine: source, now: stamp });
-    if (block.type === "workflow") return initializeWorkflowRuntime({ workflow: source, now: stamp });
-    if (block.type === "project") return initializeProjectRuntime({ project: source, now: stamp });
-    if (block.type === "cycle") return { type: "cycle", currentSmallCycleId: null, currentSlot: -1, smallCycleNumber: 0, appearanceCoverage: [], completionCoverage: [], startedAt: new Date(stamp).toISOString() };
-    return null;
+    let runtime = null;
+    if (block.type === "routine") runtime = initializeRoutineRuntime({ routine: source, now: stamp });
+    else if (block.type === "workflow") runtime = initializeWorkflowRuntime({ workflow: source, now: stamp });
+    else if (block.type === "project") runtime = initializeProjectRuntime({ project: source, now: stamp });
+    else if (block.type === "cycle") runtime = { type: "cycle", currentSmallCycleId: null, currentSlot: -1, smallCycleNumber: 0, appearanceCoverage: [], completionCoverage: [], startedAt: new Date(stamp).toISOString() };
+    if (!runtime || !Array.isArray(runtime.children)) return runtime;
+    const relationships = source.relationships || [];
+    const children = runtime.children.map((child) => {
+      const relationship = relationships.find((candidate) => candidate.id === (child.relationshipId || child.id));
+      if (relationship?.kind !== "block") return child;
+      const childBlock = state.blocks.find((candidate) => candidate.id === relationship.refId);
+      if (!childBlock || !isRunCapableBlockType(childBlock.type)) return child;
+      if (ancestors.has(childBlock.id) || childBlock.id === block.id) {
+        return { ...child, state: "BLOCKED", blockedReason: "Circular child runtime reference." };
+      }
+      const childSnapshot = runSnapshot(childBlock);
+      const childRuntime = initializeRuntimeForBlock(state, childBlock, childSnapshot, stamp, new Set([...ancestors, block.id]));
+      return {
+        ...child,
+        childRuntime: {
+          blockId: childBlock.id,
+          type: childBlock.type,
+          status: "IN_PROGRESS",
+          snapshot: childSnapshot,
+          runtime: childRuntime,
+          startedAt: new Date(stamp).toISOString()
+        }
+      };
+    });
+    return { ...runtime, children };
   }
 
   function createStartedRun(state, block, input = {}) {
     const stamp = now();
     const snapshot = runSnapshot(block, input.snapshot);
-    const runtime = input.runtime || initializeRuntimeForBlock(block, snapshot, stamp);
+    const runtime = input.runtime || initializeRuntimeForBlock(state, block, snapshot, stamp, new Set([block.id]));
     const run = createRun({
       ...input,
       id: input.id || makeId("run"),
