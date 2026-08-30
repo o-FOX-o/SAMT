@@ -21,7 +21,7 @@ export function initializeWorkflowRuntime({ workflow = {}, now = new Date() } = 
   const stamp = new Date(now).toISOString(); const relationships = workflowRelationships(workflow);
   const steps = relationships.map((relationship, position) => {
     const config = relationship.config || {};
-    return createWorkflowStep({ id: relationship.id, relationshipId: relationship.id, name: relationship.label || relationship.name || ("Step " + (position + 1)), required: config.required !== false, state: (config.predecessorId || config.dependsOnRelationshipId || position) ? "LOCKED" : "AVAILABLE", position, predecessorId: config.predecessorId || config.dependsOnRelationshipId || (position ? relationships[position - 1].id : null), timing: config.timing || null, availabilityMode: config.availabilityMode || config.timing?.availabilityMode || "immediate", delayValue: config.delayValue ?? config.timing?.delayValue ?? null, delayUnit: config.delayUnit || config.timing?.delayUnit || "hours", availableFrom: config.availableFrom || config.timing?.availableFrom || null, deadline: config.deadline || config.timing?.deadline || null, allowSkip: config.allowSkip === true, requireSkipReason: config.requireSkipReason === true, allowExcuse: config.allowExcuse === true || config.excuseAllowed === true, allowNotApplicable: config.allowNotApplicable === true || config.allowNA === true, createdAt: stamp });
+    const availabilityMode = config.availabilityMode || config.timing?.availabilityMode || "immediate"; const predecessorId = config.predecessorId || config.dependsOnRelationshipId || (position ? relationships[position - 1].id : null); return createWorkflowStep({ id: relationship.id, relationshipId: relationship.id, name: relationship.label || relationship.name || ("Step " + (position + 1)), required: config.required !== false, state: availabilityMode === "manual" || predecessorId ? "LOCKED" : "AVAILABLE", position, predecessorId, timing: config.timing || null, availabilityMode, delayValue: config.delayValue ?? config.timing?.delayValue ?? null, delayUnit: config.delayUnit || config.timing?.delayUnit || "hours", availableFrom: config.availableFrom || config.timing?.availableFrom || null, deadline: config.deadline || config.timing?.deadline || null, allowSkip: config.allowSkip === true, requireSkipReason: config.requireSkipReason === true, allowExcuse: config.allowExcuse === true || config.excuseAllowed === true, allowNotApplicable: config.allowNotApplicable === true || config.allowNA === true, createdAt: stamp });
   });
   return { type: "workflow", steps, currentStepId: steps[0]?.id || null, transitions: [], startedAt: stamp, updatedAt: stamp };
 }
@@ -81,7 +81,12 @@ export function resolveWorkflowStep({ step, state, reason = null, now = new Date
 export function transitionWorkflowStep({ run, stepId, state, reason = null, now = new Date() } = {}) {
   if (!run || !Array.isArray(run.steps)) throw new ValidationError("Workflow Run has no runtime steps.");
   const index = run.steps.findIndex((step) => step.id === stepId); if (index < 0) throw new ValidationError("Workflow step does not exist.");
-  const before = run.steps[index]; const nextStep = resolveWorkflowStep({ step: before, state, reason, now }); const steps = run.steps.map((step, current) => current === index ? nextStep : step);
+  const before = run.steps[index];
+  if (state === "AVAILABLE" && before.predecessorId) {
+    const predecessor = run.steps.find((step) => step.id === before.predecessorId);
+    if (predecessor && !isWorkflowStepSatisfied(predecessor)) throw new ValidationError("The Workflow predecessor is not satisfied.");
+  }
+  const nextStep = resolveWorkflowStep({ step: before, state, reason, now }); const steps = run.steps.map((step, current) => current === index ? nextStep : step);
   if (["COMPLETED", "EXCUSED", "NOT_APPLICABLE"].includes(state)) {
     const unlockable = steps.filter((step) => step.state === "LOCKED" && (step.predecessorId === before.id || (step.predecessorId == null && step.position === before.position + 1)));
     for (const next of unlockable) {
