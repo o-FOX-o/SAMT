@@ -255,9 +255,12 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
       if (!qualified) throw new ValidationError("Run requirements are not satisfied.");
       return finishDomainRun(next, "COMPLETED", stamp);
     }
-    if (evaluation.status && !["NOT_STARTED", "PAUSED"].includes(run.status)) {
-      if (["COMPLETED", "PARTIAL", "MISSED", "EXPIRED"].includes(evaluation.status)) return finishDomainRun(next, evaluation.status, stamp);
-      next.status = evaluation.status;
+    if (evaluation.status && run.status !== "PAUSED") {
+      const status = evaluation.status === "NOT_STARTED" && ["IN_PROGRESS", "READY_TO_FINISH", "OVERDUE"].includes(run.status)
+        ? run.status
+        : evaluation.status;
+      if (["COMPLETED", "PARTIAL", "MISSED", "EXPIRED"].includes(status)) return finishDomainRun(next, status, stamp);
+      next.status = status;
     }
     return next;
   }
