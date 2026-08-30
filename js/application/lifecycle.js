@@ -92,16 +92,24 @@ function addInterval(start, amount, unit, timezone) {
   return addCalendarDays(date, amount, timezone);
 }
 
-function latestCompletionAt(records, logs, relationshipId) {
-  const completed = records.filter((item) =>
-    item.relationshipId === relationshipId && String(item.status || "").toLowerCase() === "completed"
-  );
+function latestCompletionAt(records, logs, relationshipId, now = new Date()) {
+  const current = new Date(now);
+  const completed = records.filter((item) => {
+    if (item.relationshipId !== relationshipId || String(item.status || "").toLowerCase() !== "completed") return false;
+    const stamp = item.finishedAt || item.updatedAt || item.createdAt;
+    return !stamp || !Number.isFinite(new Date(stamp).getTime()) || new Date(stamp) <= current;
+  });
   const occurrenceIds = new Set(completed.map((item) => item.id));
   const runIds = new Set(completed.map((item) => item.runId).filter(Boolean));
-  const matching = logs.filter((log) => log.contextRefs?.some((reference) =>
-    reference.occurrenceId && occurrenceIds.has(reference.occurrenceId)
-      || reference.runId && runIds.has(reference.runId)
-  ));
+  const completedLogIds = new Set(completed.flatMap((item) => item.logIds || []));
+  const matching = logs.filter((log) => {
+    const stamp = log.eventAt || log.createdAt;
+    if (stamp && Number.isFinite(new Date(stamp).getTime()) && new Date(stamp) > current) return false;
+    return completedLogIds.has(log.id) || log.contextRefs?.some((reference) =>
+      reference.occurrenceId && occurrenceIds.has(reference.occurrenceId)
+        || reference.runId && runIds.has(reference.runId)
+    );
+  });
   return matching.map((log) => log.eventAt || log.createdAt).filter(Boolean).sort().at(-1) ||
     completed.map((item) => item.finishedAt || item.updatedAt || item.createdAt).filter(Boolean).sort().at(-1) ||
     null;
@@ -122,12 +130,15 @@ function scheduleCandidate({ schedule, relationshipId, existing = [], now, timez
     const anchorMode = schedule.anchor || "fixed";
     let anchorAt = schedule.anchorAt || null;
     if (anchorMode === "previous_occurrence") {
-      const previous = existing.filter((item) => item.relationshipId === relationshipId).sort((a, b) =>
-        String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
-      ).at(-1);
+      const current = new Date(now);
+      const previous = existing.filter((item) => {
+        if (item.relationshipId !== relationshipId) return false;
+        const stamp = item.scheduledAt || item.createdAt;
+        return stamp && Number.isFinite(new Date(stamp).getTime()) && new Date(stamp) <= current;
+      }).sort((a, b) => String(a.scheduledAt || a.createdAt || "").localeCompare(String(b.scheduledAt || b.createdAt || ""))).at(-1);
       anchorAt = previous?.scheduledAt || previous?.createdAt || null;
     } else if (anchorMode === "previous_completion") {
-      anchorAt = latestCompletionAt(existing, logs, relationshipId);
+      anchorAt = latestCompletionAt(existing, logs, relationshipId, now);
     }
     if (!anchorAt) return null;
     const every = Math.max(1, Number(schedule.every) || 1);
@@ -437,6 +448,7 @@ export function reconcileTemporalState({
           timezone
         });
         if (!candidate) continue;
+        if (candidate.scheduledAt && Number.isFinite(new Date(candidate.scheduledAt).getTime()) && new Date(candidate.scheduledAt) > current) continue;
         try {
           validateActionListSchedule(schedule);
         } catch {
