@@ -24,7 +24,7 @@ import { importPackage } from "../import-export/importer.js";
 import { packageCounts } from "../import-export/exporter.js";
 import { validatePackage } from "../import-export/validator.js";
 import { createEmptyState } from "./normalization.js";
-import { appendRestorePoint, archiveDefinitionsInState, unarchiveDefinitionsInState, moveDefinitionsToBinInState, permanentlyDeleteDefinitionsInState, restoreDefinitionsInState, clearDataInState, getRuntimeDeletionImpact, permanentlyDeleteRuntimeRecordsInState } from "./data-management.js";
+import { appendRestorePoint, archiveDefinitionsInState, unarchiveDefinitionsInState, moveDefinitionsToBinInState, permanentlyDeleteDefinitionsInState, restoreDefinitionsInState, clearDataInState, getRuntimeDeletionImpact, permanentlyDeleteRuntimeRecordsInState, removeActionLogsInState } from "./data-management.js";
 
 const TERMINAL_OCCURRENCES = ["completed", "skipped", "missed", "expired", "excused", "not_applicable"];
 
@@ -645,17 +645,8 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
       return repository.transaction(() => {
         const state = repository.getState();
         const { index, item: removed } = requireStateItem(state.actionLogs, id, "Action Log");
-        const affected = (state.occurrences || []).filter((occurrence) => (occurrence.logIds || []).includes(id));
-        state.actionLogs.splice(index, 1);
-        for (const occurrence of state.occurrences || []) occurrence.logIds = (occurrence.logIds || []).filter((logId) => logId !== id);
-        for (const occurrence of affected) {
-          if (["skipped", "excused", "not_applicable"].includes(occurrence.status)) continue;
-          const relationship = state.blocks.flatMap((block) => block.relationships || []).find((candidate) => candidate.id === occurrence.relationshipId);
-          const action = relationship?.kind === "action" ? state.actions.find((candidate) => candidate.id === relationship.refId) : null;
-          const candidate = occurrence.status === "completed" ? { ...occurrence, status: "due" } : occurrence;
-          occurrence.status = resolveOccurrenceStatus({ occurrence: candidate, logs: state.actionLogs, action, now: now(), unfinishedPolicy: occurrence.snapshot?.unfinishedPolicy || relationship?.config?.unfinishedPolicy || "expire" });
-          occurrence.updatedAt = now().toISOString();
-        }
+        const removal = removeActionLogsInState(state, [id], now());
+        const affected = removal.affectedOccurrences;
         touch();
         addHistory({ type: "action_log", description: `Deleted Action Log: ${removed.actionSnapshot?.name || removed.actionId}`, objectType: "actionLog", objectId: id, metadata: { factualSnapshotPreserved: true, affectedOccurrences: affected.map((occurrence) => occurrence.id) }, snapshots: { deleted: removed } });
         emit(EVENT_TYPES.ACTION_LOG_DELETED, { actionLogId: id });
