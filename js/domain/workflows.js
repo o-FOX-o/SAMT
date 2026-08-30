@@ -8,11 +8,20 @@ function workflowRelationships(workflow = {}) { return workflow?.relationships |
 function workflowConfig(workflow = {}) { return workflow?.config || workflow?.snapshot?.config || workflow?.snapshot?.block?.config || workflow || {}; }
 export function isWorkflowStepSatisfied(step = {}) { return ["COMPLETED", "EXCUSED", "NOT_APPLICABLE", "completed", "excused", "not_applicable"].includes(step.state); }
 
+function addWorkflowDelay(value, amount, unit = "hours") {
+  const date = new Date(value);
+  const count = Number(amount || 0);
+  if (!Number.isFinite(date.getTime()) || !Number.isFinite(count) || count <= 0) return date.toISOString();
+  if (unit === "months") date.setMonth(date.getMonth() + count);
+  else date.setTime(date.getTime() + count * (unit === "weeks" ? 604800000 : unit === "days" ? 86400000 : 3600000));
+  return date.toISOString();
+}
+
 export function initializeWorkflowRuntime({ workflow = {}, now = new Date() } = {}) {
   const stamp = new Date(now).toISOString(); const relationships = workflowRelationships(workflow);
   const steps = relationships.map((relationship, position) => {
     const config = relationship.config || {};
-    return createWorkflowStep({ id: relationship.id, relationshipId: relationship.id, name: relationship.label || relationship.name || ("Step " + (position + 1)), required: config.required !== false, state: (config.predecessorId || config.dependsOnRelationshipId || position) ? "LOCKED" : "AVAILABLE", position, predecessorId: config.predecessorId || config.dependsOnRelationshipId || (position ? relationships[position - 1].id : null), timing: config.timing || null, availableFrom: config.availableFrom || config.timing?.availableFrom || null, deadline: config.deadline || config.timing?.deadline || null, allowSkip: config.allowSkip === true, requireSkipReason: config.requireSkipReason === true, allowExcuse: config.allowExcuse === true || config.excuseAllowed === true, allowNotApplicable: config.allowNotApplicable === true || config.allowNA === true, createdAt: stamp });
+    return createWorkflowStep({ id: relationship.id, relationshipId: relationship.id, name: relationship.label || relationship.name || ("Step " + (position + 1)), required: config.required !== false, state: (config.predecessorId || config.dependsOnRelationshipId || position) ? "LOCKED" : "AVAILABLE", position, predecessorId: config.predecessorId || config.dependsOnRelationshipId || (position ? relationships[position - 1].id : null), timing: config.timing || null, availabilityMode: config.availabilityMode || config.timing?.availabilityMode || "immediate", delayValue: config.delayValue ?? config.timing?.delayValue ?? null, delayUnit: config.delayUnit || config.timing?.delayUnit || "hours", availableFrom: config.availableFrom || config.timing?.availableFrom || null, deadline: config.deadline || config.timing?.deadline || null, allowSkip: config.allowSkip === true, requireSkipReason: config.requireSkipReason === true, allowExcuse: config.allowExcuse === true || config.excuseAllowed === true, allowNotApplicable: config.allowNotApplicable === true || config.allowNA === true, createdAt: stamp });
   });
   return { type: "workflow", steps, currentStepId: steps[0]?.id || null, transitions: [], startedAt: stamp, updatedAt: stamp };
 }
@@ -46,10 +55,10 @@ export function returnToWorkflowStep({ steps = [], stepId, now = new Date() } = 
   });
 }
 
-export function createWorkflowStep({ id, relationshipId = null, name = "", required = true, state = "LOCKED", position = 0, timing = null, predecessorId = null, availableFrom = null, deadline = null, allowSkip = false, requireSkipReason = false, allowExcuse = false, allowNotApplicable = false, createdAt = null } = {}) {
+export function createWorkflowStep({ id, relationshipId = null, name = "", required = true, state = "LOCKED", position = 0, timing = null, availabilityMode = "immediate", delayValue = null, delayUnit = "hours", predecessorId = null, availableFrom = null, deadline = null, allowSkip = false, requireSkipReason = false, allowExcuse = false, allowNotApplicable = false, createdAt = null } = {}) {
   if (!id || !String(name || "").trim()) throw new ValidationError("Workflow step requires an ID and name.");
   if (!WORKFLOW_STEP_STATES.includes(state)) throw new ValidationError("Workflow step state is invalid.");
-  return { id, relationshipId, name: String(name).trim(), required: required !== false, state, position: Math.max(0, Number(position) || 0), timing: clone(timing), predecessorId, availableFrom, deadline, allowSkip: Boolean(allowSkip), requireSkipReason: Boolean(requireSkipReason), allowExcuse: Boolean(allowExcuse), allowNotApplicable: Boolean(allowNotApplicable), createdAt, resolvedAt: null, reason: null };
+  return { id, relationshipId, name: String(name).trim(), required: required !== false, state, position: Math.max(0, Number(position) || 0), timing: clone(timing), availabilityMode, delayValue: delayValue == null ? null : Number(delayValue), delayUnit, predecessorId, availableFrom, deadline, allowSkip: Boolean(allowSkip), requireSkipReason: Boolean(requireSkipReason), allowExcuse: Boolean(allowExcuse), allowNotApplicable: Boolean(allowNotApplicable), createdAt, resolvedAt: null, reason: null };
 }
 
 export function resolveWorkflowStep({ step, state, reason = null, now = new Date(), allowSkip = step?.allowSkip, allowExcuse = step?.allowExcuse, allowNotApplicable = step?.allowNotApplicable } = {}) {
@@ -77,7 +86,15 @@ export function transitionWorkflowStep({ run, stepId, state, reason = null, now 
     const unlockable = steps.filter((step) => step.state === "LOCKED" && (step.predecessorId === before.id || (step.predecessorId == null && step.position === before.position + 1)));
     for (const next of unlockable) {
       const nextIndex = steps.findIndex((step) => step.id === next.id);
-      steps[nextIndex] = { ...next, state: "AVAILABLE" };
+      const mode = next.availabilityMode || next.timing?.availabilityMode || "immediate";
+      let availableFrom = next.availableFrom || null;
+      let nextState = "AVAILABLE";
+      if (mode === "manual") nextState = "LOCKED";
+      else if (mode === "delay") {
+        availableFrom = addWorkflowDelay(new Date(now).toISOString(), next.delayValue, next.delayUnit);
+        nextState = new Date(now) >= new Date(availableFrom) ? "AVAILABLE" : "LOCKED";
+      } else if (mode === "specific" && availableFrom && new Date(now) < new Date(availableFrom)) nextState = "LOCKED";
+      steps[nextIndex] = { ...next, state: nextState, availableFrom };
     }
   }
   const stamp = new Date(now).toISOString(); const transitions = [...(run.transitions || []), { type: "STEP_STATE", stepId, from: before.state, to: state, reason: reason || null, at: stamp }];
@@ -87,7 +104,16 @@ export function transitionWorkflowStep({ run, stepId, state, reason = null, now 
 
 export function evaluateWorkflowRun({ run, workflow = null, now = new Date(), finished = false } = {}) {
   const current = new Date(now); const config = workflowConfig(workflow || run?.snapshot?.block || run?.snapshot || {});
-  const steps = (run?.steps || []).map((step) => step.deadline && !WORKFLOW_TERMINAL_STEP_STATES.includes(step.state) && current >= new Date(step.deadline) ? { ...step, state: "OVERDUE", overdueAt: step.overdueAt || current.toISOString() } : { ...step });
+  const existingSteps = run?.steps || [];
+  const steps = existingSteps.map((step) => {
+    if (WORKFLOW_TERMINAL_STEP_STATES.includes(step.state)) return { ...step };
+    const predecessor = existingSteps.find((candidate) => candidate.id === step.predecessorId);
+    let next = { ...step };
+    const predecessorSatisfied = !predecessor || isWorkflowStepSatisfied(predecessor);
+    if (next.state === "LOCKED" && predecessorSatisfied && next.availabilityMode !== "manual" && (!next.availableFrom || current >= new Date(next.availableFrom))) next.state = "AVAILABLE";
+    if (next.deadline && current >= new Date(next.deadline)) next = { ...next, state: "OVERDUE", overdueAt: next.overdueAt || current.toISOString() };
+    return next;
+  });
   const completion = resolveWorkflowCompletion({ steps }); const deadlineReached = Boolean(run?.deadline && current >= new Date(run.deadline));
   const status = finished && completion.satisfied ? "COMPLETED" : completion.satisfied ? (config.finishBehaviour === "confirm" || config.finishBehaviour === "ready" ? "READY_TO_FINISH" : "COMPLETED") : steps.some((step) => step.state === "OVERDUE") || deadlineReached ? "OVERDUE" : (steps.some((step) => ["IN_PROGRESS", "COMPLETED", "EXCUSED", "NOT_APPLICABLE"].includes(step.state)) ? "IN_PROGRESS" : "NOT_STARTED");
   return { ...completion, steps, status, deadlineReached, currentStepId: steps.find((step) => ["AVAILABLE", "IN_PROGRESS", "BLOCKED", "OVERDUE"].includes(step.state))?.id || null };
