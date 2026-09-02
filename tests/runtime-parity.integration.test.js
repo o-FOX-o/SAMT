@@ -4,6 +4,7 @@ import { fakeClock } from '../js/infrastructure/clock.js';
 import { memoryRepository } from '../js/infrastructure/repository.js';
 import { createEmptyState } from '../js/application/normalization.js';
 import { createEngine } from '../js/application/engine.js';
+import { generateSmallCycle } from '../js/domain/cycles.js';
 
 function harness(value = '2026-01-01T10:00:00Z') {
   const clock = fakeClock(new Date(value), 'UTC');
@@ -532,4 +533,50 @@ test('Weighted Cycle runtime resolves the generated slot and carries fairness fo
   assert.equal(second.smallCycleNumber, 2);
   assert.equal(second.slots[0].relationshipId, high.id);
   assert.notEqual(second.fairness[high.id], first.fairness[high.id]);
+});
+
+test('Weighted Cycle fairness continues when a Big Cycle rolls over', () => {
+  const { clock, repository, engine } = harness();
+  const lowAction = action(engine, 'action_cycle_boundary_low', 'Boundary low');
+  const highAction = action(engine, 'action_cycle_boundary_high', 'Boundary high');
+  const cycle = engine.commands.createBlock({
+    id: 'block_cycle_boundary',
+    type: 'cycle',
+    name: 'Boundary weighted cycle',
+    definitionStatus: 'ACTIVE',
+    config: { generationMode: 'weighted_limited', smallCycleSize: 1 }
+  });
+  const low = engine.commands.addRelationship(cycle.id, {
+    id: 'relationship_cycle_boundary_low',
+    kind: 'action',
+    refId: lowAction.id,
+    config: { appearanceMode: 'weighted', weight: 1, manualCompletion: true }
+  });
+  const high = engine.commands.addRelationship(cycle.id, {
+    id: 'relationship_cycle_boundary_high',
+    kind: 'action',
+    refId: highAction.id,
+    config: { appearanceMode: 'weighted', weight: 4, manualCompletion: true }
+  });
+
+  let guard = 0;
+  while (repository.getState().cycleBigCycles[0]?.status !== 'completed' && guard < 20) {
+    engine.commands.resolveCycleSlot(cycle.id, { outcome: 'completed' });
+    guard += 1;
+  }
+  assert.equal(guard < 20, true);
+  const previousBig = repository.getState().cycleBigCycles[0];
+  assert.equal(previousBig.status, 'completed');
+  assert.notDeepEqual(previousBig.fairness, cycle.config.fairness || {});
+
+  const expected = generateSmallCycle({
+    relationships: [low, high],
+    size: 1,
+    fairness: previousBig.fairness,
+    generationMode: 'weighted_limited',
+    now: clock.now()
+  });
+  const next = engine.commands.generateCycleSmallCycle(cycle.id);
+  assert.deepEqual(next.slots, expected.slots);
+  assert.deepEqual(next.fairness, expected.fairness);
 });
