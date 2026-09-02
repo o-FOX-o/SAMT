@@ -356,11 +356,16 @@ export function createCommands(repository, { clock = () => new Date(), idFactory
   function ensureCycleRuntime(state, cycle) {
     let bigIndex = (state.cycleBigCycles || []).findIndex((item) => item.cycleId === cycle.id && item.status === "open");
     if (bigIndex < 0) {
+      const previousBig = (state.cycleBigCycles || [])
+        .filter((item) => item.cycleId === cycle.id)
+        .sort((a, b) => new Date(a.completedAt || a.startedAt || 0).getTime() - new Date(b.completedAt || b.startedAt || 0).getTime())
+        .at(-1);
+      const inheritedFairness = previousBig?.fairness ?? cycle.config?.fairness ?? {};
       const big = createBigCycleRuntime({
         cycleId: cycle.id,
         relationships: cycle.relationships || [],
         smallCycleSize: cycle.config?.smallCycleSize || null,
-        fairness: cycle.config?.fairness || {},
+        fairness: clone(inheritedFairness),
         generationMode: cycle.config?.generationMode,
         config: cycle.config,
         now: now()
