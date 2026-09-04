@@ -580,3 +580,12 @@ test('Weighted Cycle fairness continues when a Big Cycle rolls over', () => {
   assert.deepEqual(next.slots, expected.slots);
   assert.deepEqual(next.fairness, expected.fairness);
 });
+
+test('Quantity targets reject fractional configuration instead of rounding', () => {
+  const { engine } = harness();
+  assert.throws(() => engine.commands.createAction({
+    id: 'action_fractional_quantity',
+    name: 'Fractional quantity',
+    completion: { method: 'quantity', target: 2.5 }
+  }), /whole number/);
+});
