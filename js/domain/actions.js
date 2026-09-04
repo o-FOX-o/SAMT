@@ -1,7 +1,7 @@
 import { ValidationError } from "../shared/errors.js";
 import { createId } from "../shared/ids.js";
 import { clone, requireName } from "../shared/validation.js";
-import { finiteNumber, positiveInteger } from "../shared/numbers.js";
+import { finiteNumber } from "../shared/numbers.js";
 import { validateResultFields, normalizeResultConfig } from "./results.js";
 
 export const ACTION_DIRECTIONS = ["do", "avoid"];
@@ -10,7 +10,11 @@ export const COMPLETION_METHODS = ["quantity", "time"];
 export function normalizeCompletion(completion = {}) {
   const method = completion.method || "time";
   if (!COMPLETION_METHODS.includes(method)) throw new ValidationError("Action completion method is invalid.");
-  if (method === "quantity") return { method, target: positiveInteger(completion.target, 1) };
+  if (method === "quantity") {
+    const target = Number(completion.target);
+    if (!Number.isInteger(target) || target < 1) throw new ValidationError("Quantity target must be a whole number of at least 1.");
+    return { method, target };
+  }
   return { method, minimumMinutes: Math.max(0, finiteNumber(completion.minimumMinutes, 0)) };
 }
 
