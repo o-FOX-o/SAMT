@@ -16,6 +16,7 @@ import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.temporal.TemporalAdjusters;
 import java.util.UUID;
+import java.util.Iterator;
 
 /** Closes calendar Routine Runs without opening the UI. The JS engine applies
  * the same rules whenever the app opens, so delayed/battery-restricted delivery
@@ -78,7 +79,10 @@ public class BoundaryReceiver extends BroadcastReceiver {
     }
     private static void history(JSONObject state,String event,long at,JSONObject details) throws Exception {
         JSONObject row=new JSONObject().put("id",id("history")).put("event",event).put("at",iso(at));
-        for(String key:details.keySet())row.put(key,details.get(key));state.getJSONArray("history").put(row);
+        for(Iterator<String> keys=details.keys();keys.hasNext();) {
+            String key=keys.next();row.put(key,details.get(key));
+        }
+        state.getJSONArray("history").put(row);
     }
     public static void reconcile(Context context) {
         String raw=context.getSharedPreferences("samt",Context.MODE_PRIVATE).getString("state","");

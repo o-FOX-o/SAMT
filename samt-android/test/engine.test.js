@@ -32,6 +32,18 @@ const occ=state.occurrences.find(o=>o.entryId===todo.id&&o.dueAt==='2026-03-30T0
 assert.ok(alarmRequests(state,at('2026-03-30T07:10:00Z')).some(x=>x.id===`${occ.id}:alarm`));
 state=issue(state,'COMPLETE_TODO','2026-03-30T09:01:00Z',{occurrenceId:occ.id}).state;
 assert.equal(state.actionLogs.length,0,'Todo does not create factual Action Log');
+const catchUp=reconcile(state,at('2026-04-04T13:00:00Z'));
+assert.ok(catchUp.occurrences.some(o=>o.entryId===todo.id&&o.dueAt==='2026-04-02T09:00:00.000Z'),'past scheduled occurrences catch up after days away');
+
+let manual=issue(emptyState(),'ADD_DEFINITION',t0,{kind:'blocks',data:{name:'Manual errands',type:'action_list'}});
+let manualState=manual.state,manualList=manual.value;
+manual=issue(manualState,'ADD_ENTRY',t0,{blockId:manualList.id,kind:'Todo',name:'Visit library',schedule:{mode:'manual'}});
+manualState=manual.state;const manualEntry=manual.value;
+manualState=issue(manualState,'ACTIVATE',t0,{blockId:manualList.id}).state;
+manualState=issue(manualState,'START_MANUAL_OCCURRENCE',t0,{blockId:manualList.id,entryId:manualEntry.id}).state;
+assert.equal(manualState.occurrences.length,1);
+manualState=issue(manualState,'PAUSE_ENTRY','2026-03-28T12:01:00Z',{blockId:manualList.id,entryId:manualEntry.id,paused:true}).state;
+assert.throws(()=>issue(manualState,'START_MANUAL_OCCURRENCE','2026-03-28T12:02:00Z',{blockId:manualList.id,entryId:manualEntry.id}),/unavailable/);
 
 // An Action Log is one record even when it contributes to two contexts.
 const current=state.runs.find(r=>r.status==='IN_PROGRESS');

@@ -174,24 +174,36 @@ function dueForDay(entry,key,settings) {
   if(!['daily','weekly','monthly','yearly','interval','specific_dates'].includes(mode))return null;
   return zoned(key,schedule.time||'09:00',zone);
 }
+function makeOccurrence(s,block,entry,due,at) {
+  const target=entry.kind==='Action'?byId(s,'actions',entry.refId):null;
+  const o={id:id('occurrence'),blockId:block.id,entryId:entry.id,entrySnapshot:copy(entry),
+    itemSnapshot:target?copy(target):{name:entry.name},dueAt:due,
+    deadlineAt:entry.deadlineMinutes!=null?iso(Date.parse(due)+Number(entry.deadlineMinutes)*60000):due,
+    status:'OPEN',createdAt:iso(at),resolvedAt:null,snoozedUntil:null,actionLogId:null};
+  s.occurrences.push(o);record(s,'occurrence_created',{occurrenceId:o.id,entryId:entry.id},at);return o;
+}
 function reconcileOccurrences(s,at,horizonDays=14) {
   const zone=s.settings.timezone||'Europe/London',today=localKey(at,zone);
   for(const block of s.blocks.filter(b=>b.type==='action_list'&&b.status!=='ARCHIVED'&&s.activations.some(a=>a.blockId===b.id&&a.status==='ACTIVE'))) {
+    const activation=s.activations.find(a=>a.blockId===block.id&&a.status==='ACTIVE');
     for(const entry of block.entries||[]) {
-      const earliest=entry.activeFrom?localKey(entry.activeFrom,zone):entry.createdAt?localKey(entry.createdAt,zone):today;
-      for(let d=-1;d<=horizonDays;d++) {
-        const key=dayShift(today,d);if(key<earliest)continue;
+      const earliest=[entry.activeFrom,entry.createdAt,activation?.startedAt].filter(Boolean).map(x=>localKey(x,zone)).sort().at(-1)||today;
+      const last=s.occurrences.filter(o=>o.entryId===entry.id).sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).at(-1);
+      const from=last?dayShift(localKey(last.dueAt,zone),-1):earliest;
+      const minDay=dayShift(today,-739);
+      const start=from>minDay?from:minDay;
+      const days=Math.round((Date.parse(today+'T12:00:00Z')-Date.parse(start+'T12:00:00Z'))/86400000);
+      for(let d=0;d<=days+horizonDays;d++) {
+        const key=dayShift(start,d);if(key<earliest)continue;
         const due=dueForDay(entry,key,s.settings);if(!due||!eligibleEntry(entry,due))continue;
         if(entry.repeatEnd&&due>=entry.repeatEnd)continue;
         if(s.occurrences.some(o=>o.entryId===entry.id&&o.dueAt===due))continue;
-        const snapshot=copy(entry),target=entry.kind==='Action'?byId(s,'actions',entry.refId):null;
-        s.occurrences.push({id:id('occurrence'),blockId:block.id,entryId:entry.id,entrySnapshot:snapshot,
-          itemSnapshot:target?copy(target):{name:entry.name},dueAt:due,deadlineAt:entry.deadlineMinutes!=null?iso(Date.parse(due)+Number(entry.deadlineMinutes)*60000):due,
-          status:'OPEN',createdAt:iso(at),resolvedAt:null,snoozedUntil:null,actionLogId:null});
+        if(entry.overlap==='block_next'&&s.occurrences.some(o=>o.entryId===entry.id&&['OPEN','OVERDUE','CARRIED'].includes(o.status)&&o.dueAt<due))continue;
+        makeOccurrence(s,block,entry,due,at);
       }
     }
   }
-  for(const o of s.occurrences.filter(x=>x.status==='OPEN'&&x.deadlineAt<iso(at))) {
+  for(const o of s.occurrences.filter(x=>x.status==='OPEN'&&x.deadlineAt<=iso(at))) {
     const policy=o.entrySnapshot?.unfinished||'stay_overdue';
     if(policy==='expire') {o.status='MISSED';o.resolvedAt=o.deadlineAt;record(s,'occurrence_missed',{occurrenceId:o.id},at);}
     else if(policy==='carry_forward')o.status='CARRIED';
@@ -319,6 +331,13 @@ export function execute(input,command,at) {
         unfinished:command.unfinished||'stay_overdue',overlap:command.overlap||'keep_each',status:'ACTIVE',paused:false,createdAt:iso(at),updatedAt:iso(at)};
       b.entries.push(e);record(s,'entry_added',{blockId:b.id,entryId:e.id},at);value=e;break;
     }
+    case 'START_MANUAL_OCCURRENCE':{
+      const b=byId(s,'blocks',command.blockId),e=b?.entries?.find(x=>x.id===command.entryId);
+      insist(b?.type==='action_list'&&e?.schedule?.mode==='manual','Manual entry not found.');
+      insist(s.activations.some(a=>a.blockId===b.id&&a.status==='ACTIVE'),'Activate the Action List first.');
+      insist(eligibleEntry(e,at),'Entry is unavailable during this period.');
+      value=makeOccurrence(s,b,e,iso(at),at);break;
+    }
     case 'EDIT_ENTRY':{
       const b=byId(s,'blocks',command.blockId),e=b?.entries?.find(x=>x.id===command.entryId);insist(e,'Entry not found.');
       Object.assign(e,copy(command.changes),{id:e.id,createdAt:e.createdAt,updatedAt:iso(at)});
@@ -332,6 +351,10 @@ export function execute(input,command,at) {
     case 'STOP_OFF_PERIOD':{
       const e=byId(s,'blocks',command.blockId)?.entries?.find(x=>x.id===command.entryId),p=e?.offPeriods?.find(x=>x.id===command.offId);insist(p,'Off Period not found.');
       p.notifiedAt=iso(at);p.end=iso(at);record(s,'off_period_ended',{entryId:e.id,offId:p.id},at);break;
+    }
+    case 'PAUSE_ENTRY':{
+      const e=byId(s,'blocks',command.blockId)?.entries?.find(x=>x.id===command.entryId);insist(e,'Entry not found.');
+      e.paused=!!command.paused;e.updatedAt=iso(at);record(s,e.paused?'entry_paused':'entry_resumed',{entryId:e.id},at);value=e;break;
     }
     case 'ACTIVATE':{
       const b=byId(s,'blocks',command.blockId);insist(b&&b.type!=='collection','Executable Block not found.');
