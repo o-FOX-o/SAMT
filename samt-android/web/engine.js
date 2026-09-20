@@ -281,13 +281,15 @@ function addActionLog(s,command,at) {
   const kind=a.completion?.type||'quantity';if(a.direction!=='Avoid')insist((kind==='time'?durationMinutes:quantity)>0,'Log a positive amount.');
   const results={};for(const f of a.resultFields||[])results[f.id]=resultValue(f,command.results?.[f.id],s);
   const contexts=[...new Set(command.contexts||[])];
-  const log={id:id('log'),actionId:a.id,actionSnapshot:copy(a),resultSnapshots:copy(a.resultFields),at:iso(at),quantity,durationMinutes,results,contexts,notes:String(command.notes||'')};
+  const occurredAt=command.occurredAt?iso(command.occurredAt):iso(at);
+  insist(Date.parse(occurredAt)<=Number(at)+600000,'The Action time cannot be in the future.');
+  const log={id:id('log'),actionId:a.id,actionSnapshot:copy(a),resultSnapshots:copy(a.resultFields),at:occurredAt,recordedAt:iso(at),quantity,durationMinutes,results,contexts,notes:String(command.notes||'')};
   s.actionLogs.push(log);
   for(const ref of contexts) {
     const o=byId(s,'occurrences',ref);if(o&&['OPEN','OVERDUE','CARRIED'].includes(o.status)&&o.itemSnapshot?.id===a.id) {o.status='COMPLETED';o.resolvedAt=iso(at);o.actionLogId=log.id;}
     for(const run of s.runs)for(const child of run.children)if(child.id===ref&&child.refId===a.id&&child.status==='OPEN') {child.status='DONE';child.actionLogId=log.id;child.completedAt=iso(at);advanceWorkflow(run,child,at);}
   }
-  record(s,'action_logged',{actionLogId:log.id,actionId:a.id,contexts},at);return log;
+  record(s,'action_logged',{actionLogId:log.id,actionId:a.id,contexts,occurredAt},at);return log;
 }
 function addDefinition(s,kind,data,at) {
   insist(['categories','tags','units','actions','blocks'].includes(kind),'Invalid definition.');

@@ -3,6 +3,7 @@ import {TYPES,RESULT_TYPES,emptyState,validate,execute,reconcile,periodBounds,lo
 const KEY='samt.android.v3';const root=document.getElementById('app');
 const H=(value)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const date=(v)=>v?new Date(v).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—';
+const inputDateTime=(value=Date.now())=>{const x=new Date(value),pad=n=>String(n).padStart(2,'0');return `${x.getFullYear()}-${pad(x.getMonth()+1)}-${pad(x.getDate())}T${pad(x.getHours())}:${pad(x.getMinutes())}`;};
 const short=(v)=>v?new Date(v).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}):'—';
 const title=s=>s.replaceAll('_',' ').replace(/\b\w/g,x=>x.toUpperCase());
 const names={home:'Today',actions:'Actions',blocks:'Blocks',log:'Quick log',activity:'History & analysis',settings:'Settings'};
@@ -13,7 +14,12 @@ let state,recovery=null,route='home',detail=null,modal=null,toast=null,tab='all'
 try{const native=window.SamtAndroid?.loadState?.();const raw=native||localStorage.getItem(KEY);state=raw?JSON.parse(raw):emptyState();validate(state);}catch(e){recovery=e;state=emptyState();}
 function persist(){try{localStorage.setItem(KEY,JSON.stringify(state));temporary=false;}catch(e){temporary=true;show('Storage unavailable: export a backup before closing.','bad');}}
 function save(){persist();syncNative();render();}
-function command(type,extra={}){try{const result=execute(state,{type,...extra},Date.now());state=result.state;save();return result.value;}catch(e){show(e.message||String(e),'bad');return null;}}
+function refreshFromPhone(){
+ const raw=window.SamtAndroid?.loadState?.();if(!raw)return;
+ const onPhone=JSON.parse(raw);validate(onPhone);
+ if(Date.parse(onPhone.meta?.updatedAt||0)>Date.parse(state.meta?.updatedAt||0))state=onPhone;
+}
+function command(type,extra={}){try{refreshFromPhone();const result=execute(state,{type,...extra},Date.now());state=result.state;save();return result.value;}catch(e){show(e.message||String(e),'bad');return null;}}
 function syncNative(){if(!window.SamtAndroid)return;try{if(!window.SamtAndroid.saveState(JSON.stringify(state)))throw new Error('Phone storage refused the change.');window.SamtAndroid.scheduleAlarms(JSON.stringify(alarmRequests(state,Date.now())));}catch(e){temporary=true;show(`Phone storage or alarm sync needs attention: ${e.message}`,'bad');}}
 function show(message,kind='good'){toast={message,kind};render();setTimeout(()=>{toast=null;render()},3600);}
 function navigate(to,chosen=null){route=to;detail=chosen;modal=null;render();window.scrollTo({top:0,behavior:'instant'});}
@@ -76,7 +82,7 @@ function logEditor(action,contextId=null){const resultFields=(action.resultField
  field(`${f.label}${f.required?' *':''}`,`result_${f.id}`,'',f.type==='text'?'text':'number')).join('');
  const contexts=state.runs.filter(r=>r.status==='IN_PROGRESS').flatMap(r=>r.children.filter(c=>c.refId===action.id&&c.status==='OPEN').map(c=>[c.id,`${r.blockSnapshot.name} · ${c.definitionSnapshot?.name||action.name}`]));
  const occ=state.occurrences.filter(o=>o.itemSnapshot?.id===action.id&&['OPEN','OVERDUE','CARRIED'].includes(o.status)).map(o=>[o.id,`${state.blocks.find(b=>b.id===o.blockId)?.name||'List'} · ${date(o.dueAt)}`]);
- open('log',`Log ${action.name}`,`<div class="form-grid">${field('Quantity','quantity',action.completion?.type==='quantity'?1:0,'number')}${field('Minutes','durationMinutes',action.completion?.type==='time'?1:0,'number')}</div>${resultFields}${field('Notes','notes','','textarea')}<div class="field"><label>Linked contexts</label>${[...contexts,...occ].map(([key,label])=>check(label,`context_${key}`,key===contextId)).join('')||'<small>No current Runs or Occurrences require this Action; your Log still counts in History and Analysis.</small>'}</div>`, 'Save log',{actionId:action.id});}
+ open('log',`Log ${action.name}`,`${field('When it happened','occurredAt',inputDateTime(),'datetime-local')}<div class="form-grid">${field('Quantity','quantity',action.completion?.type==='quantity'?1:0,'number')}${field('Minutes','durationMinutes',action.completion?.type==='time'?1:0,'number')}</div>${resultFields}${field('Notes','notes','','textarea')}<div class="field"><label>Linked contexts</label>${[...contexts,...occ].map(([key,label])=>check(label,`context_${key}`,key===contextId)).join('')||'<small>No current Runs or Occurrences require this Action; your Log still counts in History and Analysis.</small>'}</div>`, 'Save log',{actionId:action.id});}
 function modalFor(action,node){const id=node.dataset.id,blockId=node.dataset.block;switch(action){
  case 'new-action':actionEditor();break;case 'edit-action':actionEditor(state.actions.find(x=>x.id===id));break;
  case 'new-block':case 'new-list':blockEditor();break;case 'edit-block':blockEditor(state.blocks.find(x=>x.id===id));break;
@@ -87,7 +93,7 @@ function modalFor(action,node){const id=node.dataset.id,blockId=node.dataset.blo
  case 'log-occ':{const occ=state.occurrences.find(x=>x.id===id);logEditor(state.actions.find(a=>a.id===occ.itemSnapshot.id),occ.id);break;}
  case 'quick-log':if(state.actions.length)navigate('log');else actionEditor();break;
  case 'new-review':open('review','Write a review',`${select('Period','period',[['day','Daily'],['week','Weekly'],['month','Monthly']],'week')}${field('Highlights','highlights')}${field('Reflection','notes','','textarea')}${field('What next?','next','','textarea')}`,'Save review');break;
- case 'off-period':open('off','Set an Off Period',`${field('Start','start',new Date().toISOString().slice(0,16),'datetime-local')}${field('End (leave blank for until notified)','end','','datetime-local')}${check('Until notified / ended by me','untilNotified',false)}`,'Set Off',{blockId,entryId:id});break;
+ case 'off-period':open('off','Set an Off Period',`${field('Start','start',inputDateTime(),'datetime-local')}${field('End (leave blank for until notified)','end','','datetime-local')}${check('Until notified / ended by me','untilNotified',false)}`,'Set Off',{blockId,entryId:id});break;
  case 'occ-options':open('occ-options','Occurrence options',`<p>Skip resolves only this occurrence. Snooze moves its alarm while the item remains open.</p><div class="actions">${btn('Snooze 10 minutes','snooze-occ',`data-id="${H(id)}"`)}${btn('Skip this one','skip-occ',`data-id="${H(id)}"`,'danger')}</div>`,'Close',{occurrenceId:id});break;
  case 'new-categories':open('category','New Category',`${field('Name','name')}${field('Colour','color','#1d9a84','color')}`,'Create');break;
  case 'new-tags':open('tag','New Tag',`${field('Name','name')}${select('Category','categoryId',state.categories.map(c=>[c.id,c.name]),state.categories[0]?.id)}`,'Create');break;
@@ -125,7 +131,7 @@ function submit(form){const m=modal;if(!m)return;const d=formObject(form);let va
  case 'activation':value=command('ACTIVATE',{blockId:m.data.blockId,schedule:{period:d.period}});break;
  case 'log':{
    const results={},contexts=[];for(const [k,v] of Object.entries(d)){if(k.startsWith('result_'))results[k.slice(7)]=v;if(k.startsWith('context_')&&v)contexts.push(k.slice(8));}
-   value=command('LOG_ACTION',{actionId:m.data.actionId,quantity:Number(d.quantity)||0,durationMinutes:Number(d.durationMinutes)||0,results,contexts,notes:d.notes});break;
+   value=command('LOG_ACTION',{actionId:m.data.actionId,occurredAt:d.occurredAt?new Date(d.occurredAt).toISOString():null,quantity:Number(d.quantity)||0,durationMinutes:Number(d.durationMinutes)||0,results,contexts,notes:d.notes});break;
  }
  case 'review':value=command('ADD_REVIEW',{period:d.period,highlights:d.highlights,notes:d.notes,next:d.next});break;
  case 'off':value=command('OFF_PERIOD',{blockId:m.data.blockId,entryId:m.data.entryId,start:new Date(d.start).toISOString(),end:d.end?new Date(d.end).toISOString():null,untilNotified:!!d.untilNotified});break;
@@ -176,5 +182,5 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>rende
 if(!recovery){state=reconcile(state,Date.now());persist();syncNative();}
 window.SamtResume=()=>{try{const raw=window.SamtAndroid?.loadState?.();if(raw){const onPhone=JSON.parse(raw);validate(onPhone);state=reconcile(onPhone,Date.now());persist();syncNative();render();}}catch(e){show(`Phone data could not be refreshed: ${e.message}`,'bad');}};
 window.SamtFileError=message=>show(message,'bad');
-setInterval(()=>{if(!recovery){const next=reconcile(state,Date.now());if(JSON.stringify(next)!==JSON.stringify(state)){state=next;save();}}},60000);
+setInterval(()=>{if(!recovery){try{refreshFromPhone();const next=reconcile(state,Date.now());if(JSON.stringify(next)!==JSON.stringify(state)){state=next;save();}}catch(e){show(e.message,'bad');}}},60000);
 render();

@@ -18,6 +18,9 @@ jobs:
           gradle-version: '8.9'
       - name: Check engine behavior
         run: node samt-android/test/engine.test.js
+      - name: Check mobile interface
+        run: bash test/ui-smoke.sh
+        working-directory: samt-android
       - name: Build Android preview
         run: gradle :app:assembleDebug
         working-directory: samt-android
@@ -25,3 +28,7 @@ jobs:
         with:
           name: samt-android-preview
           path: samt-android/app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: samt-screen-preview
+          path: samt-android/ui-preview.png
