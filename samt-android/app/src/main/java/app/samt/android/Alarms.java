@@ -14,6 +14,9 @@ import android.net.Uri;
 import android.os.Build;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
 
 public final class Alarms {
     private static final String CHANNEL="samt_reminders";
@@ -47,6 +50,29 @@ public final class Alarms {
         try {schedule(context,new JSONArray(context.getSharedPreferences("samt",Context.MODE_PRIVATE).getString("alarms","[]")));}
         catch(Exception ignored) {}
     }
+    public static void replaceFromState(Context context,JSONObject state) throws Exception {
+        long now=System.currentTimeMillis();List<JSONObject> requests=new ArrayList<>();
+        JSONArray occurrences=state.optJSONArray("occurrences");if(occurrences==null)return;
+        for(int i=0;i<occurrences.length();i++) {
+            JSONObject o=occurrences.getJSONObject(i);String status=o.optString("status");
+            if(!"OPEN".equals(status)&&!"OVERDUE".equals(status)&&!"CARRIED".equals(status))continue;
+            JSONObject e=o.optJSONObject("entrySnapshot"),item=o.optJSONObject("itemSnapshot");if(e==null)continue;
+            long due=androidTime(o.optString("dueAt"));String title=item==null?e.optString("name","SAMT reminder"):item.optString("name",e.optString("name","SAMT reminder"));
+            JSONArray minutes=e.optJSONArray("reminderMinutes");
+            if(minutes!=null)for(int j=0;j<minutes.length();j++) {
+                long when=due-(long)(minutes.optDouble(j,0)*60000);
+                if(when>now)requests.add(new JSONObject().put("id",o.getString("id")+":"+minutes.optString(j))
+                    .put("at",when).put("title",title).put("body","Upcoming in SAMT").put("kind","reminder"));
+            }
+            long alarm=o.isNull("snoozedUntil")?due:androidTime(o.optString("snoozedUntil"));
+            if(e.optBoolean("alarm")&&alarm>now)requests.add(new JSONObject().put("id",o.getString("id")+":alarm")
+                .put("at",alarm).put("title",title).put("body","Your SAMT alarm is due").put("kind","alarm"));
+        }
+        requests.sort(Comparator.comparingLong(x->x.optLong("at")));
+        JSONArray next=new JSONArray();for(int i=0;i<Math.min(250,requests.size());i++)next.put(requests.get(i));
+        replaceAll(context,next.toString());
+    }
+    private static long androidTime(String value) {try{return java.time.Instant.parse(value).toEpochMilli();}catch(Exception e){return 0;}}
     private static void schedule(Context context,JSONArray list) throws Exception {
         AlarmManager manager=(AlarmManager)context.getSystemService(Context.ALARM_SERVICE);
         for(int i=0;i<list.length();i++) {

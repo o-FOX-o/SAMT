@@ -2,6 +2,7 @@
    receive an explicit instant so tests and background reconciliation agree. */
 export const TYPES = ['collection','action_list','routine','workflow','project','cycle','target'];
 export const RESULT_TYPES = ['percentage','score','measurement','text','choice'];
+export const SCHEDULE_MODES = ['manual','once','daily','weekly','monthly','yearly','interval','specific_dates'];
 export const VERSION = 3;
 const copy = value => structuredClone(value);
 const id = prefix => `${prefix}_${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
@@ -65,10 +66,15 @@ export function validate(s) {
   for(const key of arrays) insist(Array.isArray(s[key]),`Invalid ${key} collection.`);
   const ids=new Set();
   for(const key of arrays)for(const record of s[key]) {insist(record&&typeof record.id==='string'&&record.id,'A record has no stable ID.');insist(!ids.has(record.id),`Duplicate ID ${record.id}.`);ids.add(record.id);}
+  insist(s.settings&&typeof s.settings.timezone==='string','Timezone setting is required.');
+  try{formatter(s.settings.timezone).format(new Date());}catch(e){throw new Error('Unknown timezone.');}
+  for(const key of ['categories','tags','units','actions','blocks'])for(const record of s[key])insist(typeof record.name==='string'&&record.name.trim(),'Every definition needs a name.');
   for(const tag of s.tags) insist(!!byId(s,'categories',tag.categoryId),'A Tag has no Category.');
   for(const a of s.actions) {
+    insist(['Do','Avoid'].includes(a.direction),'Action direction must be Do or Avoid.');
+    insist(['quantity','time'].includes(a.completion?.type),'Action completion must be quantity or time.');
     insist(Array.isArray(a.resultFields)&&a.resultFields.length<=10,'Actions allow up to ten Results.');
-    for(const r of a.resultFields)insist(RESULT_TYPES.includes(r.type),'Invalid Result type.');
+    for(const r of a.resultFields){insist(RESULT_TYPES.includes(r.type),'Invalid Result type.');insist(typeof r.label==='string'&&r.label.trim(),'A Result needs a name.');}
     for(const tagId of a.tagIds||[])insist(!!byId(s,'tags',tagId),'Action references missing Tag.');
   }
   for(const block of s.blocks) {
@@ -82,6 +88,12 @@ export function validate(s) {
     if(block.type==='action_list')for(const e of block.entries||[]) {
       insist(e.kind==='Action'||e.kind==='Todo','Invalid Action List entry.');
       if(e.kind==='Action')insist(!!byId(s,'actions',e.refId),'Action entry has no Action.');
+      else insist(typeof e.name==='string'&&e.name.trim(),'Todo needs a title.');
+      insist(SCHEDULE_MODES.includes(e.schedule?.mode||'manual'),'Unknown schedule mode.');
+      if(e.schedule?.mode==='once')insist(Number.isFinite(Date.parse(e.schedule.at)),'Once schedule needs a date and time.');
+      if(e.schedule?.mode==='monthly'||e.schedule?.mode==='yearly')insist(Number(e.schedule.day||1)>=1&&Number(e.schedule.day||1)<=31,'Day of month must be 1–31.');
+      if(e.schedule?.mode==='yearly')insist(Number(e.schedule.month||1)>=1&&Number(e.schedule.month||1)<=12,'Month must be 1–12.');
+      insist((e.reminderMinutes||[]).every(n=>Number.isFinite(Number(n))&&Number(n)>=0),'Reminder minutes must be positive.');
       const off=e.offPeriods||[];
       for(let i=0;i<off.length;i++)for(let j=0;j<i;j++)
         insist(!(off[i].start<(off[j].end||'9999')&&off[j].start<(off[i].end||'9999')),'Off Periods cannot overlap.');
@@ -125,6 +137,20 @@ function createRun(s,block,at,bounds=null) {
 }
 function finishRun(s,run,at) {
   if(run.status!=='IN_PROGRESS')return;
+  const end=run.deadlineAt&&run.deadlineAt<iso(at)?run.deadlineAt:iso(at);
+  for(const child of run.children) {
+    if(child.kind==='Action'&&child.definitionSnapshot?.direction==='Avoid') {
+      const actual=avoidValue(s,child.definitionSnapshot,run.startedAt,end);
+      const limit=Number(child.definitionSnapshot.avoid?.limit)||0;
+      child.actual=actual;child.status=actual<=limit?'DONE':'MISSED';child.resolvedAt=iso(at);
+    }
+    if(child.kind==='Block'&&child.definitionSnapshot?.type==='routine'&&child.status==='OPEN') {
+      const cadence=child.definitionSnapshot.config?.period||'daily';
+      const nested=s.runs.filter(r=>r.blockId===child.refId&&r.startedAt>=run.startedAt&&r.startedAt<end);
+      const expected=cadence==='daily'?Math.round((Date.parse(localKey(end,s.settings.timezone)+'T12:00:00Z')-Date.parse(localKey(run.startedAt,s.settings.timezone)+'T12:00:00Z'))/86400000):1;
+      if(nested.length>=Math.max(1,expected)&&nested.every(r=>r.status==='COMPLETED')){child.status='DONE';child.resolvedAt=iso(at);}
+    }
+  }
   const required=run.children.filter(x=>x.required),done=required.filter(x=>x.status==='DONE');
   run.status=done.length===required.length?'COMPLETED':done.length?'MISSED':'MISSED';
   run.finishedAt=iso(at);record(s,`run_${run.status.toLowerCase()}`,{runId:run.id,blockId:run.blockId,completed:done.length,required:required.length},at);
@@ -135,8 +161,13 @@ function advanceWorkflow(run,child,at) {
   if(next){next.status='OPEN';next.availableAt=iso(at);run.transitions.push({id:id('transition'),event:'NEXT_STEP',at:iso(at),from:child.id,to:next.id});}
 }
 function reconcileRoutines(s,at) {
-  for(const activation of s.activations.filter(x=>x.status==='ACTIVE')) {
-    const block=byId(s,'blocks',activation.blockId);if(!block||block.type!=='routine')continue;
+  const active=s.activations.filter(x=>x.status==='ACTIVE').sort((a,b)=>{
+    const pa=a.schedule?.period||byId(s,'blocks',a.blockId)?.config?.period;
+    const pb=b.schedule?.period||byId(s,'blocks',b.blockId)?.config?.period;
+    return (pa==='daily'?0:1)-(pb==='daily'?0:1);
+  });
+  for(const activation of active) {
+    const block=byId(s,'blocks',activation.blockId);if(!block||block.status==='ARCHIVED'||block.type!=='routine')continue;
     const cadence=activation.schedule?.period||block.config?.period||'manual';
     if(!['daily','weekly'].includes(cadence))continue;
     const current=periodBounds(cadence,at,s.settings),start=activation.startedAt||iso(at);
@@ -287,7 +318,15 @@ function addActionLog(s,command,at) {
   s.actionLogs.push(log);
   for(const ref of contexts) {
     const o=byId(s,'occurrences',ref);if(o&&['OPEN','OVERDUE','CARRIED'].includes(o.status)&&o.itemSnapshot?.id===a.id) {o.status='COMPLETED';o.resolvedAt=iso(at);o.actionLogId=log.id;}
-    for(const run of s.runs)for(const child of run.children)if(child.id===ref&&child.refId===a.id&&child.status==='OPEN') {child.status='DONE';child.actionLogId=log.id;child.completedAt=iso(at);advanceWorkflow(run,child,at);}
+    for(const run of s.runs)for(const child of run.children)if(child.id===ref&&child.refId===a.id&&child.status==='OPEN') {
+      if(child.definitionSnapshot?.direction==='Avoid')continue;
+      const completion=child.definitionSnapshot?.completion||{type:'quantity',target:1};
+      const delta=completion.type==='time'?durationMinutes:quantity;
+      child.progress=(child.progress||0)+delta;
+      child.actionLogIds=[...(child.actionLogIds||[]),log.id];child.actionLogId=log.id;
+      const required=completion.type==='time'?Math.max(1,Number(completion.minimumMinutes)||1):Math.max(1,Number(completion.target)||1);
+      if(child.progress>=required){child.status='DONE';child.completedAt=iso(at);advanceWorkflow(run,child,at);}
+    }
   }
   record(s,'action_logged',{actionLogId:log.id,actionId:a.id,contexts,occurredAt},at);return log;
 }
@@ -298,10 +337,53 @@ function addDefinition(s,kind,data,at) {
   if(kind==='blocks') {obj.relationships=obj.relationships||[];if(obj.type==='action_list')obj.entries=obj.entries||[];obj.config=obj.config||{};}
   s[kind].push(obj);record(s,'definition_created',{kind,definitionId:obj.id},at);return obj;
 }
+function addStarter(s,which,at) {
+  insist(['religion','hygiene','nutrition'].includes(which),'Unknown starter routine.');
+  insist(!s.blocks.some(b=>b.templateKey===which),'This starter routine already exists.');
+  const category=addDefinition(s,'categories',{name:which==='religion'?'Religion':which==='hygiene'?'Hygiene':'Nutrition'},at);
+  const tag=addDefinition(s,'tags',{name:'Daily practice',categoryId:category.id},at);
+  const makeAction=(name,completion={type:'quantity',target:1},more={})=>addDefinition(s,'actions',{name,tagIds:[tag.id],completion,...more},at);
+  const makeBlock=(name,period,key)=>addDefinition(s,'blocks',{name,type:'routine',templateKey:key,config:{period}},at);
+  const link=(block,kind,ref,required=true)=>block.relationships.push({id:id('relation'),kind,refId:ref.id,required,weight:1,config:{}});
+  const activate=(block,period)=>s.activations.push({id:id('activation'),blockId:block.id,status:'ACTIVE',startedAt:iso(at),schedule:{period}});
+  if(which==='religion') {
+    const daily=makeBlock('Daily prayer','daily','religion_prayer');
+    for(const name of ['Fajr','Dhuhr','Asr','Maghrib','Isha']) {
+      const action=makeAction(name,{type:'quantity',target:1},{resultFields:[{label:'How was this prayer? (0–10)',type:'score',minimum:0,maximum:10,required:false}]});
+      link(daily,'Action',action);
+    }
+    const weekly=makeBlock('Religion','weekly',which);link(weekly,'Block',daily);
+    for(const name of ['Jumu’ah','Extra prayer','Quran reading','Memorisation']) {
+      const action=makeAction(name,{type:name.includes('reading')||name==='Memorisation'?'time':'quantity',target:1,minimumMinutes:1});
+      link(weekly,'Action',action,false);
+    }
+    activate(daily,'daily');activate(weekly,'weekly');return {daily,weekly};
+  }
+  if(which==='hygiene') {
+    const daily=makeBlock('Daily hygiene','daily','hygiene_daily');
+    link(daily,'Action',makeAction('Brush teeth',{type:'quantity',target:2}));
+    link(daily,'Action',makeAction('Wash face',{type:'quantity',target:1}));
+    const weekly=makeBlock('Hygiene','weekly',which);link(weekly,'Block',daily);
+    link(weekly,'Action',makeAction('Shower',{type:'quantity',target:2}));
+    link(weekly,'Action',makeAction('Laundry',{type:'quantity',target:1}),false);
+    activate(daily,'daily');activate(weekly,'weekly');return {daily,weekly};
+  }
+  const daily=makeBlock('Daily nutrition','daily',which);
+  link(daily,'Action',makeAction('Nutrition check-in',{type:'quantity',target:1},{resultFields:[{label:'How did eating feel?',type:'text',required:false}]}));
+  activate(daily,'daily');return {daily};
+}
 function dependencies(s,kind,target) {
   const refs=[];
   if(kind==='actions')for(const b of s.blocks) {for(const r of b.relationships||[])if(r.kind==='Action'&&r.refId===target)refs.push(b.name);for(const e of b.entries||[])if(e.kind==='Action'&&e.refId===target)refs.push(b.name);}
-  if(kind==='blocks')for(const b of s.blocks)for(const r of b.relationships||[])if(r.kind==='Block'&&r.refId===target)refs.push(b.name);
+  if(kind==='actions'){
+    if(s.occurrences.some(o=>o.itemSnapshot?.id===target&&['OPEN','OVERDUE','CARRIED'].includes(o.status)))refs.push('open occurrence');
+    if(s.runs.some(run=>run.status==='IN_PROGRESS'&&run.children.some(c=>c.kind==='Action'&&c.refId===target&&c.status==='OPEN')))refs.push('active Run');
+  }
+  if(kind==='blocks'){
+    for(const b of s.blocks)for(const r of b.relationships||[])if(r.kind==='Block'&&r.refId===target)refs.push(b.name);
+    if(s.activations.some(a=>a.blockId===target&&a.status==='ACTIVE'))refs.push('active Block');
+    if(s.runs.some(r=>r.blockId===target&&r.status==='IN_PROGRESS'))refs.push('active Run');
+  }
   if(kind==='categories')for(const tag of s.tags)if(tag.categoryId===target)refs.push(tag.name);
   if(kind==='tags')for(const a of s.actions)if((a.tagIds||[]).includes(target))refs.push(a.name);
   return refs;
@@ -311,6 +393,7 @@ export function execute(input,command,at) {
   const s=reconcile(input,at);let value=null;
   switch(command.type) {
     case 'ADD_DEFINITION':value=addDefinition(s,command.kind,command.data,at);break;
+    case 'ADD_STARTER':value=addStarter(s,command.which,at);break;
     case 'EDIT_DEFINITION':{
       const d=byId(s,command.kind,command.id);insist(d,'Definition not found.');
       const revised={...d,...copy(command.changes),id:d.id,createdAt:d.createdAt,updatedAt:iso(at)};
@@ -359,14 +442,16 @@ export function execute(input,command,at) {
       e.paused=!!command.paused;e.updatedAt=iso(at);record(s,e.paused?'entry_paused':'entry_resumed',{entryId:e.id},at);value=e;break;
     }
     case 'ACTIVATE':{
-      const b=byId(s,'blocks',command.blockId);insist(b&&b.type!=='collection','Executable Block not found.');
+      const b=byId(s,'blocks',command.blockId);insist(b&&b.status!=='ARCHIVED'&&b.type!=='collection','Executable Block not found.');
       let activation=s.activations.find(x=>x.blockId===b.id);
       if(!activation) {activation={id:id('activation'),blockId:b.id,status:'ACTIVE',startedAt:iso(at),schedule:copy(command.schedule||{period:'manual'})};s.activations.push(activation);}
       else Object.assign(activation,{status:'ACTIVE',schedule:copy(command.schedule||activation.schedule)});
       if(['workflow','project'].includes(b.type)&&!s.runs.some(x=>x.blockId===b.id&&x.status==='IN_PROGRESS'))createRun(s,b,at);
       record(s,'block_activated',{blockId:b.id},at);value=activation;break;
     }
-    case 'RUN_NOW':{const b=byId(s,'blocks',command.blockId);insist(b&&['routine','workflow','project'].includes(b.type),'Block cannot start a Run.');value=createRun(s,b,at);break;}
+    case 'RUN_NOW':{const b=byId(s,'blocks',command.blockId);insist(b&&b.status!=='ARCHIVED'&&['routine','workflow','project'].includes(b.type),'Block cannot start a Run.');
+      insist(!s.activations.some(a=>a.blockId===b.id&&a.status==='ACTIVE'&&['daily','weekly'].includes(a.schedule?.period)),'Calendar Routine starts automatically.');
+      value=createRun(s,b,at);break;}
     case 'LOG_ACTION':value=addActionLog(s,command,at);break;
     case 'COMPLETE_TODO':{
       const o=byId(s,'occurrences',command.occurrenceId);insist(o?.entrySnapshot?.kind==='Todo'&&['OPEN','OVERDUE','CARRIED'].includes(o.status),'Open Todo occurrence not found.');
@@ -405,7 +490,12 @@ export function execute(input,command,at) {
     case 'ADD_REVIEW':value={id:id('review'),at:iso(at),period:command.period||'week',notes:String(command.notes||''),highlights:String(command.highlights||''),next:String(command.next||'')};s.reviews.push(value);record(s,'review_saved',{reviewId:value.id},at);break;
     case 'SET_SETTINGS':s.settings={...s.settings,...copy(command.changes)};record(s,'settings_changed',{keys:Object.keys(command.changes)},at);break;
     case 'ARCHIVE':{
-      const d=byId(s,command.kind,command.id);insist(d,'Definition not found.');d.status='ARCHIVED';d.updatedAt=iso(at);record(s,'definition_archived',{kind:command.kind,definitionId:d.id},at);value=d;break;
+      const d=byId(s,command.kind,command.id);insist(d,'Definition not found.');d.status='ARCHIVED';d.updatedAt=iso(at);
+      if(command.kind==='blocks'){
+        const a=s.activations.find(x=>x.blockId===d.id&&x.status==='ACTIVE');if(a)a.status='INACTIVE';
+        for(const run of s.runs.filter(x=>x.blockId===d.id&&x.status==='IN_PROGRESS'))finishRun(s,run,at);
+      }
+      record(s,'definition_archived',{kind:command.kind,definitionId:d.id},at);value=d;break;
     }
     case 'BIN':{
       const d=byId(s,command.kind,command.id);insist(d,'Definition not found.');const dep=dependencies(s,command.kind,d.id);
