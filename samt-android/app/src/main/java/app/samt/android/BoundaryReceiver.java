@@ -162,6 +162,7 @@ public class BoundaryReceiver extends BroadcastReceiver {
     }
     private static void reconcileEntries(JSONObject state,long now) throws Exception {
         JSONArray blocks=state.getJSONArray("blocks"),activations=state.getJSONArray("activations"),occurrences=state.getJSONArray("occurrences");
+        updateOccurrenceStatus(state,now);
         ZoneId zone=zone(state);LocalDate today=Instant.ofEpochMilli(now).atZone(zone).toLocalDate();
         for(int i=0;i<blocks.length();i++) {
             JSONObject b=blocks.getJSONObject(i);if(!"action_list".equals(b.optString("type"))||"ARCHIVED".equals(b.optString("status")))continue;
@@ -176,6 +177,12 @@ public class BoundaryReceiver extends BroadcastReceiver {
                     LocalDate date=Instant.ofEpochMilli(from).atZone(zone).toLocalDate();if(date.isAfter(first))first=date;
                 }
                 LocalDate cutoff=today.minusDays(739);if(first.isBefore(cutoff))first=cutoff;
+                long lastDue=0;
+                for(int k=0;k<occurrences.length();k++){
+                    JSONObject previous=occurrences.getJSONObject(k);
+                    if(entry.getString("id").equals(previous.optString("entryId")))lastDue=Math.max(lastDue,time(previous.optString("dueAt")));
+                }
+                if(lastDue>0){LocalDate recent=Instant.ofEpochMilli(lastDue).atZone(zone).toLocalDate().minusDays(1);if(recent.isAfter(first))first=recent;}
                 for(LocalDate day=first;!day.isAfter(today.plusDays(14));day=day.plusDays(1)) {
                     long due=dueFor(entry,day,zone);if(due==0||!eligible(entry,due))continue;
                     boolean exists=false,blocked=false;
@@ -195,12 +202,17 @@ public class BoundaryReceiver extends BroadcastReceiver {
                         .put("deadlineAt",iso(deadline)).put("status","OPEN").put("createdAt",iso(now))
                         .put("resolvedAt",JSONObject.NULL).put("snoozedUntil",JSONObject.NULL).put("actionLogId",JSONObject.NULL);
                     occurrences.put(o);history(state,"occurrence_created",now,new JSONObject().put("occurrenceId",o.getString("id")).put("entryId",entry.getString("id")));
+                    if(deadline<now)updateOccurrenceStatus(state,now);
                 }
             }
         }
+        updateOccurrenceStatus(state,now);
+    }
+    private static void updateOccurrenceStatus(JSONObject state,long now) throws Exception {
+        JSONArray occurrences=state.getJSONArray("occurrences");
         for(int i=0;i<occurrences.length();i++) {
             JSONObject o=occurrences.getJSONObject(i);
-            if(!"OPEN".equals(o.optString("status"))||time(o.optString("deadlineAt"))>now)continue;
+            if(!"OPEN".equals(o.optString("status"))||time(o.optString("deadlineAt"))>=now)continue;
             String policy=o.optJSONObject("entrySnapshot")==null?"stay_overdue":o.getJSONObject("entrySnapshot").optString("unfinished","stay_overdue");
             if("expire".equals(policy)) {
                 o.put("status","MISSED").put("resolvedAt",o.getString("deadlineAt"));

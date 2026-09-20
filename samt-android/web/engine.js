@@ -211,10 +211,19 @@ function makeOccurrence(s,block,entry,due,at) {
     itemSnapshot:target?copy(target):{name:entry.name},dueAt:due,
     deadlineAt:entry.deadlineMinutes!=null?iso(Date.parse(due)+Number(entry.deadlineMinutes)*60000):due,
     status:'OPEN',createdAt:iso(at),resolvedAt:null,snoozedUntil:null,actionLogId:null};
-  s.occurrences.push(o);record(s,'occurrence_created',{occurrenceId:o.id,entryId:entry.id},at);return o;
+  s.occurrences.push(o);record(s,'occurrence_created',{occurrenceId:o.id,entryId:entry.id},at);
+  updateOccurrenceStatus(s,at);return o;
+}
+function updateOccurrenceStatus(s,at) {
+  for(const o of s.occurrences.filter(x=>x.status==='OPEN'&&x.deadlineAt<iso(at))) {
+    const policy=o.entrySnapshot?.unfinished||'stay_overdue';
+    if(policy==='expire') {o.status='MISSED';o.resolvedAt=o.deadlineAt;record(s,'occurrence_missed',{occurrenceId:o.id},at);}
+    else o.status=policy==='carry_forward'?'CARRIED':'OVERDUE';
+  }
 }
 function reconcileOccurrences(s,at,horizonDays=14) {
   const zone=s.settings.timezone||'Europe/London',today=localKey(at,zone);
+  updateOccurrenceStatus(s,at);
   for(const block of s.blocks.filter(b=>b.type==='action_list'&&b.status!=='ARCHIVED'&&s.activations.some(a=>a.blockId===b.id&&a.status==='ACTIVE'))) {
     const activation=s.activations.find(a=>a.blockId===block.id&&a.status==='ACTIVE');
     for(const entry of block.entries||[]) {
@@ -233,12 +242,6 @@ function reconcileOccurrences(s,at,horizonDays=14) {
         makeOccurrence(s,block,entry,due,at);
       }
     }
-  }
-  for(const o of s.occurrences.filter(x=>x.status==='OPEN'&&x.deadlineAt<=iso(at))) {
-    const policy=o.entrySnapshot?.unfinished||'stay_overdue';
-    if(policy==='expire') {o.status='MISSED';o.resolvedAt=o.deadlineAt;record(s,'occurrence_missed',{occurrenceId:o.id},at);}
-    else if(policy==='carry_forward')o.status='CARRIED';
-    else o.status='OVERDUE';
   }
 }
 function targetActual(s,block,bounds) {

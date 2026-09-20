@@ -31,4 +31,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: samt-screen-preview
-          path: samt-android/ui-preview.png
+          path: |
+            samt-android/ui-preview.png
+            samt-android/ui-starters.png
+            samt-android/ui-dark.png
