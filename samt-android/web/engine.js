@@ -51,7 +51,7 @@ export function periodBounds(kind,instant,settings={}) {
   return {key:start,start:zoned(start,'00:00',zone),end:zoned(end,'00:00',zone),timezone:zone};
 }
 export function emptyState() {
-  return {format:'samt',schemaVersion:VERSION,settings:{timezone:'Europe/London',weekStartsOn:1,appearance:'system',accent:'#147d86',categoryColors:{},capacityHours:40,defaults:{cycleMissed:'keep_position'}},
+  return {format:'samt',schemaVersion:VERSION,settings:{timezone:'Europe/London',weekStartsOn:1,appearance:'system',accent:'#147d86',categoryColors:{},capacityHours:40,defaults:{cycleMissed:'keep_position',cyclePosition:'continue',cycleAutoClose:true,targetAutoClose:true,actionListUnfinished:'expire'}},
     categories:[],tags:[],units:[],actions:[],blocks:[],activations:[],runs:[],occurrences:[],periods:[],cycles:[],actionLogs:[],reviews:[],history:[],bin:[],restorePoints:[],meta:{createdAt:null,updatedAt:null}};
 }
 const arrays=['categories','tags','units','actions','blocks','activations','runs','occurrences','periods','cycles','actionLogs','reviews','history','bin','restorePoints'];
@@ -473,7 +473,12 @@ function dependencies(s,kind,target) {
   }
   if(kind==='categories')for(const tag of s.tags)if(tag.categoryId===target)refs.push(tag.name);
   if(kind==='tags')for(const a of s.actions)if((a.tagIds||[]).includes(target))refs.push(a.name);
+  if(kind==='units')for(const a of s.actions)if((a.resultFields||[]).some(r=>r.unitId===target))refs.push(a.name);
   return refs;
+}
+function addRestorePoint(s,reason,at) {
+  const snapshot=copy(s);snapshot.restorePoints=[];
+  const point={id:id('restore'),at:iso(at),reason,state:snapshot};s.restorePoints.push(point);return point;
 }
 export function execute(input,command,at) {
   insist(command&&typeof command.type==='string','Command required.');
@@ -500,7 +505,7 @@ export function execute(input,command,at) {
       const e={id:id('entry'),kind:command.kind,refId:command.refId||null,name:command.name||'',schedule:copy(command.schedule||{mode:'manual'}),
         activeFrom:command.activeFrom||null,activeUntil:command.activeUntil||null,deadlineMinutes:command.deadlineMinutes??null,
         repeatEnd:command.repeatEnd||null,offPeriods:[],reminderMinutes:copy(command.reminderMinutes||[]),alarm:!!command.alarm,
-        unfinished:command.unfinished||'stay_overdue',overlap:command.overlap||'keep_each',status:'ACTIVE',paused:false,createdAt:iso(at),updatedAt:iso(at)};
+        unfinished:command.unfinished||s.settings.defaults?.actionListUnfinished||'expire',overlap:command.overlap||'keep_each',status:'ACTIVE',paused:false,createdAt:iso(at),updatedAt:iso(at)};
       b.entries.push(e);record(s,'entry_added',{blockId:b.id,entryId:e.id},at);value=e;break;
     }
     case 'START_MANUAL_OCCURRENCE':{
@@ -612,8 +617,13 @@ export function execute(input,command,at) {
       s[item.kind].push(copy(item.snapshot));s.bin=s.bin.filter(x=>x.id!==item.id);record(s,'definition_restored',{kind:item.kind,definitionId:item.originalId},at);value=item.snapshot;break;
     }
     case 'PERMANENT_DELETE':{
-      const item=byId(s,'bin',command.binId);insist(item,'Bin item not found.');s.bin=s.bin.filter(x=>x.id!==item.id);
+      const item=byId(s,'bin',command.binId);insist(item,'Bin item not found.');addRestorePoint(s,`before permanently deleting ${item.snapshot.name}`,at);s.bin=s.bin.filter(x=>x.id!==item.id);
       record(s,'definition_deleted',{kind:item.kind,definitionId:item.originalId,displayName:item.snapshot.name},at);break;
+    }
+    case 'EMPTY_BIN':{
+      if(s.bin.length)addRestorePoint(s,'before emptying Bin',at);
+      for(const item of s.bin)record(s,'definition_deleted',{kind:item.kind,definitionId:item.originalId,displayName:item.snapshot.name},at);
+      value=s.bin.length;s.bin=[];break;
     }
     default:throw new Error(`Unknown command: ${command.type}`);
   }

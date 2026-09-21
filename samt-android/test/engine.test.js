@@ -26,12 +26,13 @@ assert.equal(state.runs[2].startedAt,'2026-03-29T23:00:00.000Z');
 
 result=issue(state,'ADD_DEFINITION','2026-03-30T07:00:00Z',{kind:'blocks',data:{name:'Daily List',type:'action_list'}});state=result.state;const list=result.value;
 result=issue(state,'ADD_ENTRY','2026-03-30T07:00:00Z',{blockId:list.id,kind:'Todo',name:'Pack bag',schedule:{mode:'daily',time:'10:00'},reminderMinutes:[30],alarm:true});state=result.state;const todo=result.value;
-result=issue(state,'ADD_ENTRY','2026-03-30T07:00:00Z',{blockId:list.id,kind:'Action',refId:action.id,schedule:{mode:'daily',time:'10:00'}});state=result.state;const listedAction=result.value;
+result=issue(state,'ADD_ENTRY','2026-03-30T07:00:00Z',{blockId:list.id,kind:'Action',refId:action.id,schedule:{mode:'daily',time:'10:00'},deadlineMinutes:60});state=result.state;const listedAction=result.value;
 state=issue(state,'ACTIVATE','2026-03-30T07:00:00Z',{blockId:list.id}).state;
 state=reconcile(state,at('2026-03-30T07:10:00Z'));assert.ok(state.occurrences.length>0);
 const occ=state.occurrences.find(o=>o.entryId===todo.id&&o.dueAt==='2026-03-30T09:00:00.000Z');assert.ok(occ);
+assert.equal(todo.unfinished,'expire','new Action List items use the automatic missed default');
 assert.ok(alarmRequests(state,at('2026-03-30T07:10:00Z')).some(x=>x.id===`${occ.id}:alarm`));
-state=issue(state,'COMPLETE_TODO','2026-03-30T09:01:00Z',{occurrenceId:occ.id}).state;
+state=issue(state,'COMPLETE_TODO','2026-03-30T09:00:00Z',{occurrenceId:occ.id}).state;
 assert.equal(state.actionLogs.length,0,'Todo does not create factual Action Log');
 const catchUp=reconcile(state,at('2026-04-04T13:00:00Z'));
 assert.ok(catchUp.occurrences.some(o=>o.entryId===todo.id&&o.dueAt==='2026-04-02T09:00:00.000Z'),'past scheduled occurrences catch up after days away');
@@ -179,4 +180,12 @@ assert.equal(pauses.runs[0].status,'PAUSED','paused calendar Run remains factual
 assert.equal(pauses.runs.filter(r=>r.status==='MISSED').length,0);
 assert.equal(pauses.runs.at(-1).status,'IN_PROGRESS');
 assert.equal(pauses.activations[0].status,'ACTIVE');
-console.log('PASS: snapshots, DST rollover, missed routines, Action/Todo distinction, one log across contexts, Results, cycles, alarms, Avoid zero periods, Workflow, Target and atomic backups');
+
+let safety=emptyState();
+add=issue(safety,'ADD_DEFINITION','2026-07-03T08:00:00Z',{kind:'categories',data:{name:'Temporary'}});safety=add.state;
+safety=issue(safety,'BIN','2026-07-03T08:01:00Z',{kind:'categories',id:add.value.id}).state;
+assert.equal(safety.bin.length,1);
+safety=issue(safety,'EMPTY_BIN','2026-07-03T08:02:00Z').state;
+assert.equal(safety.bin.length,0);assert.equal(safety.restorePoints.length,1,'permanent emptying creates a restore point');
+assert.equal(safety.restorePoints[0].state.bin.length,1,'restore point preserves the Bin before emptying');
+console.log('PASS: snapshots, DST rollover, missed routines, Action/Todo distinction, shared contexts, Results, cycles, alarms, Avoid, Workflow, Target, pause/resume and data safety');

@@ -85,6 +85,9 @@ public class MainActivity extends Activity {
         } catch(Exception e) { web.evaluateJavascript("window.SamtFileError("+JSONObject.quote(e.getMessage())+")",null); }
     }
     public class PhoneBridge {
+        @JavascriptInterface public String version() {
+            return BuildConfig.VERSION_NAME;
+        }
         @JavascriptInterface public String loadState() {
             return getSharedPreferences("samt",MODE_PRIVATE).getString("state","");
         }
