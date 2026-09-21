@@ -52,6 +52,13 @@ public class BoundaryReceiver extends BroadcastReceiver {
             String raw=context.getSharedPreferences("samt",Context.MODE_PRIVATE).getString("state","");
             ZoneId zone=raw.isEmpty()?ZoneId.of("Europe/London"):zone(new JSONObject(raw));
             long at=LocalDate.now(zone).plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli();
+            if(!raw.isEmpty()) {
+                JSONArray activations=new JSONObject(raw).optJSONArray("activations");
+                if(activations!=null)for(int i=0;i<activations.length();i++) {
+                    JSONObject activation=activations.getJSONObject(i);long resume=time(activation.optString("resumeAt"));
+                    if("PAUSED".equals(activation.optString("status"))&&resume>System.currentTimeMillis())at=Math.min(at,resume);
+                }
+            }
             AlarmManager manager=(AlarmManager)context.getSystemService(Context.ALARM_SERVICE);
             try {
                 if(Build.VERSION.SDK_INT<31||manager.canScheduleExactAlarms())manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,at,pending(context));
@@ -208,6 +215,36 @@ public class BoundaryReceiver extends BroadcastReceiver {
         }
         updateOccurrenceStatus(state,now);
     }
+    private static boolean resumeActivations(JSONObject state,long now) throws Exception {
+        boolean changed=false;JSONArray activations=state.getJSONArray("activations"),blocks=state.getJSONArray("blocks"),runs=state.getJSONArray("runs");
+        for(int i=0;i<activations.length();i++) {
+            JSONObject activation=activations.getJSONObject(i);long resume=time(activation.optString("resumeAt"));
+            if(!"PAUSED".equals(activation.optString("status"))||resume<=0||resume>now)continue;
+            JSONObject block=find(blocks,activation.optString("blockId"));if(block==null)continue;
+            String period=activation.optJSONObject("schedule")==null?"manual":activation.getJSONObject("schedule").optString("period","manual");
+            boolean calendar="daily".equals(period)||"weekly".equals(period),hasRunning=false;
+            long paused=time(activation.optString("pausedAt")),duration=Math.max(0,resume-paused);
+            for(int j=0;j<runs.length();j++) {
+                JSONObject run=runs.getJSONObject(j);if(!activation.optString("id").equals(run.optString("activationId"))||!"PAUSED".equals(run.optString("status")))continue;
+                long deadline=time(run.optString("deadlineAt"));if(calendar&&deadline>0&&deadline<=resume)continue;
+                run.put("status","IN_PROGRESS").put("resumedAt",iso(resume));hasRunning=true;
+                if(!calendar&&deadline>0)run.put("deadlineAt",iso(deadline+duration));
+                JSONArray children=run.optJSONArray("children");if(!calendar&&children!=null)for(int k=0;k<children.length();k++) {
+                    JSONObject child=children.getJSONObject(k);long available=time(child.optString("availableAt"));if(available>0)child.put("availableAt",iso(available+duration));
+                }
+                run.getJSONArray("transitions").put(new JSONObject().put("id",id("transition")).put("event","RUN_RESUMED")
+                    .put("at",iso(resume)).put("pauseDurationMinutes",duration/60000d));
+            }
+            activation.put("status","ACTIVE").put("resumedAt",iso(resume)).put("totalPausedMinutes",activation.optDouble("totalPausedMinutes",0)+duration/60000d)
+                .put("pausedAt",JSONObject.NULL).put("resumeAt",JSONObject.NULL);
+            if(calendar&&"routine".equals(block.optString("type"))&&!hasRunning) {
+                long begin=start(resume,period,state);runs.put(newRun(block,activation,begin,period,state));
+            }
+            history(state,"block_resumed",resume,new JSONObject().put("blockId",block.getString("id")).put("activationId",activation.getString("id")));
+            changed=true;
+        }
+        return changed;
+    }
     private static void updateOccurrenceStatus(JSONObject state,long now) throws Exception {
         JSONArray occurrences=state.getJSONArray("occurrences");
         for(int i=0;i<occurrences.length();i++) {
@@ -226,7 +263,7 @@ public class BoundaryReceiver extends BroadcastReceiver {
         try {
             JSONObject state=new JSONObject(raw);if(state.optInt("schemaVersion")!=3)return;
             JSONArray activations=state.getJSONArray("activations"),blocks=state.getJSONArray("blocks"),runs=state.getJSONArray("runs");
-            long now=System.currentTimeMillis();boolean changed=false;
+            long now=System.currentTimeMillis();boolean changed=resumeActivations(state,now);
             for(int pass=0;pass<2;pass++)for(int i=0;i<activations.length();i++) {
                 JSONObject activation=activations.getJSONObject(i);
                 if(!"ACTIVE".equals(activation.optString("status")))continue;

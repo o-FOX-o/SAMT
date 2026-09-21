@@ -353,8 +353,32 @@ function ensureCycles(s,at) {
     else s.cycles.push({id:id('cycle'),blockId:b.id,sequence:slots,index:0,round:1,bigRound:1,createdAt:iso(at),history:[]});
   }
 }
+function resumeActivation(s,activation,at) {
+  const resumeAt=activation.resumeAt&&activation.resumeAt<iso(at)?activation.resumeAt:iso(at);
+  const pausedAt=activation.pausedAt||resumeAt,duration=Math.max(0,Date.parse(resumeAt)-Date.parse(pausedAt));
+  const block=byId(s,'blocks',activation.blockId),cadence=activation.schedule?.period||block?.config?.period||'manual';
+  const pausedRuns=s.runs.filter(r=>r.activationId===activation.id&&r.status==='PAUSED');
+  for(const run of pausedRuns) {
+    if(['daily','weekly'].includes(cadence)&&run.deadlineAt<=resumeAt)continue;
+    run.status='IN_PROGRESS';run.resumedAt=resumeAt;
+    if(!['daily','weekly'].includes(cadence)) {
+      if(run.deadlineAt)run.deadlineAt=iso(Date.parse(run.deadlineAt)+duration);
+      for(const child of run.children)if(child.availableAt)child.availableAt=iso(Date.parse(child.availableAt)+duration);
+    }
+    run.transitions.push({id:id('transition'),event:'RUN_RESUMED',at:resumeAt,pauseDurationMinutes:duration/60000});
+  }
+  activation.status='ACTIVE';activation.resumedAt=resumeAt;activation.totalPausedMinutes=(activation.totalPausedMinutes||0)+duration/60000;
+  activation.pausedAt=null;activation.resumeAt=null;
+  if(block?.type==='routine'&&['daily','weekly'].includes(cadence)&&!s.runs.some(r=>r.activationId===activation.id&&r.status==='IN_PROGRESS')) {
+    const bounds=periodBounds(cadence,resumeAt,s.settings);createRun(s,block,resumeAt,bounds);
+  }
+  record(s,'block_resumed',{blockId:activation.blockId,activationId:activation.id},resumeAt);
+}
+function reconcileActivations(s,at) {
+  for(const activation of s.activations.filter(a=>a.status==='PAUSED'&&a.resumeAt&&a.resumeAt<=iso(at)))resumeActivation(s,activation,at);
+}
 export function reconcile(input,at) {
-  const s=copy(input);validate(s);reconcileRoutines(s,at);reconcileOccurrences(s,at);reconcilePeriods(s,at);reconcileAvoid(s,at);ensureCycles(s,at);return s;
+  const s=copy(input);validate(s);reconcileActivations(s,at);reconcileRoutines(s,at);reconcileOccurrences(s,at);reconcilePeriods(s,at);reconcileAvoid(s,at);ensureCycles(s,at);return s;
 }
 function eligibleActionContexts(s,actionId,at) {
   const when=iso(at),refs=[];
@@ -511,6 +535,19 @@ export function execute(input,command,at) {
       else Object.assign(activation,{status:'ACTIVE',schedule:copy(command.schedule||activation.schedule)});
       if(['workflow','project'].includes(b.type)&&!s.runs.some(x=>x.blockId===b.id&&x.status==='IN_PROGRESS'))createRun(s,b,at);
       record(s,'block_activated',{blockId:b.id},at);value=activation;break;
+    }
+    case 'PAUSE_BLOCK':{
+      const activation=s.activations.find(x=>x.blockId===command.blockId&&x.status==='ACTIVE');insist(activation,'Active Block not found.');
+      const resumeAt=iso(command.resumeAt);insist(resumeAt>iso(at),'Choose a future resume time.');
+      activation.status='PAUSED';activation.pausedAt=iso(at);activation.resumeAt=resumeAt;
+      for(const run of s.runs.filter(r=>r.activationId===activation.id&&r.status==='IN_PROGRESS')) {
+        run.status='PAUSED';run.pausedAt=iso(at);run.transitions.push({id:id('transition'),event:'RUN_PAUSED',at:iso(at),resumeAt});
+      }
+      record(s,'block_paused',{blockId:activation.blockId,activationId:activation.id,resumeAt},at);value=activation;break;
+    }
+    case 'RESUME_BLOCK':{
+      const activation=s.activations.find(x=>x.blockId===command.blockId&&x.status==='PAUSED');insist(activation,'Paused Block not found.');
+      activation.resumeAt=iso(at);resumeActivation(s,activation,at);value=activation;break;
     }
     case 'RUN_NOW':{const b=byId(s,'blocks',command.blockId);insist(b&&b.status!=='ARCHIVED'&&['routine','workflow','project'].includes(b.type),'Block cannot start a Run.');
       insist(!s.activations.some(a=>a.blockId===b.id&&a.status==='ACTIVE'&&['daily','weekly'].includes(a.schedule?.period)),'Calendar Routine starts automatically.');

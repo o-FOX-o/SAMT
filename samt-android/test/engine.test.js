@@ -168,4 +168,15 @@ fair=issue(fair,'ADD_RELATIONSHIP','2026-07-01T11:00:00Z',{blockId:fairCycle.id,
 fair=issue(fair,'ACTIVATE','2026-07-01T11:00:00Z',{blockId:fairCycle.id}).state;
 const sequence=fair.cycles[0].sequence.map(x=>fair.actions.find(a=>a.id===x.refId).name);
 assert.deepEqual(sequence,['Chest','Chest','Legs','Chest','Chest'],'weighted Cycle positions are spread deterministically');
+
+let pauses=emptyState();
+add=issue(pauses,'ADD_DEFINITION','2026-07-01T08:00:00Z',{kind:'blocks',data:{name:'Paused daily',type:'routine',config:{period:'daily'}}});pauses=add.state;const pausedDaily=add.value;
+pauses=issue(pauses,'ACTIVATE','2026-07-01T08:00:00Z',{blockId:pausedDaily.id,schedule:{period:'daily'}}).state;
+pauses=issue(pauses,'PAUSE_BLOCK','2026-07-01T20:00:00Z',{blockId:pausedDaily.id,resumeAt:'2026-07-02T12:00:00Z'}).state;
+assert.equal(pauses.runs[0].status,'PAUSED');
+pauses=reconcile(pauses,at('2026-07-02T13:00:00Z'));
+assert.equal(pauses.runs[0].status,'PAUSED','paused calendar Run remains factual and is not marked missed');
+assert.equal(pauses.runs.filter(r=>r.status==='MISSED').length,0);
+assert.equal(pauses.runs.at(-1).status,'IN_PROGRESS');
+assert.equal(pauses.activations[0].status,'ACTIVE');
 console.log('PASS: snapshots, DST rollover, missed routines, Action/Todo distinction, one log across contexts, Results, cycles, alarms, Avoid zero periods, Workflow, Target and atomic backups');
