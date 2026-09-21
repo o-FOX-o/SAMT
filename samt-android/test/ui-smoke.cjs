@@ -44,6 +44,7 @@ async function connect(){
   await until('!!document.querySelector("[data-action=starter][data-id=religion]")');
   await evaluate('document.querySelector("[data-action=starter][data-id=religion]").click()');
   await until('document.querySelector("h1")?.textContent === "Blocks"');
+  assert.equal(await evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1'),true,'mobile page must not overflow horizontally');
   const state=await evaluate('JSON.parse(localStorage.getItem("samt.android.v3"))');
   assert.equal(state.blocks.length,2);
   assert.equal(state.runs.filter(r=>r.status==='IN_PROGRESS').length,2);

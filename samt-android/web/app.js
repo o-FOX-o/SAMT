@@ -23,7 +23,12 @@ function refreshFromPhone(){
 }
 function command(type,extra={}){try{refreshFromPhone();const result=execute(state,{type,...extra},Date.now());state=result.state;save();return result.value;}catch(e){show(e.message||String(e),'bad');return null;}}
 function syncNative(){if(!window.SamtAndroid)return;try{if(!window.SamtAndroid.saveState(JSON.stringify(state)))throw new Error('Phone storage refused the change.');window.SamtAndroid.scheduleAlarms(JSON.stringify(alarmRequests(state,Date.now())));}catch(e){temporary=true;show(`Phone storage or alarm sync needs attention: ${e.message}`,'bad');}}
-function show(message,kind='good'){toast={message,kind};render();setTimeout(()=>{toast=null;render()},3600);}
+function show(message,kind='good'){
+  toast={message,kind};let element=document.querySelector('.toast');
+  if(!element){element=document.createElement('div');element.className='toast';element.setAttribute('role','status');document.body.appendChild(element);}
+  element.textContent=message;element.dataset.kind=kind;
+  const current=toast;setTimeout(()=>{if(toast===current){toast=null;document.querySelector('.toast')?.remove();}},3600);
+}
 function navigate(to,chosen=null){route=to;detail=chosen;modal=null;render();window.scrollTo({top:0,behavior:'instant'});}
 function theme(){const preference=state.settings.appearance||'system';return preference==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):preference;}
 function btn(label,action,extra='',style=''){return `<button type="button" class="btn ${style}" data-action="${H(action)}" ${extra}>${H(label)}</button>`;}
