@@ -26,6 +26,7 @@ assert.equal(state.runs[2].startedAt,'2026-03-29T23:00:00.000Z');
 
 result=issue(state,'ADD_DEFINITION','2026-03-30T07:00:00Z',{kind:'blocks',data:{name:'Daily List',type:'action_list'}});state=result.state;const list=result.value;
 result=issue(state,'ADD_ENTRY','2026-03-30T07:00:00Z',{blockId:list.id,kind:'Todo',name:'Pack bag',schedule:{mode:'daily',time:'10:00'},reminderMinutes:[30],alarm:true});state=result.state;const todo=result.value;
+result=issue(state,'ADD_ENTRY','2026-03-30T07:00:00Z',{blockId:list.id,kind:'Action',refId:action.id,schedule:{mode:'daily',time:'10:00'}});state=result.state;const listedAction=result.value;
 state=issue(state,'ACTIVATE','2026-03-30T07:00:00Z',{blockId:list.id}).state;
 state=reconcile(state,at('2026-03-30T07:10:00Z'));assert.ok(state.occurrences.length>0);
 const occ=state.occurrences.find(o=>o.entryId===todo.id&&o.dueAt==='2026-03-30T09:00:00.000Z');assert.ok(occ);
@@ -47,8 +48,11 @@ assert.throws(()=>issue(manualState,'START_MANUAL_OCCURRENCE','2026-03-28T12:02:
 
 // An Action Log is one record even when it contributes to two contexts.
 const current=state.runs.find(r=>r.status==='IN_PROGRESS');
-result=issue(state,'LOG_ACTION','2026-03-30T09:03:00Z',{actionId:action.id,durationMinutes:45,results:{effort:8},contexts:[current.children[0].id,'another-context']});state=result.state;
+const actionOccurrence=state.occurrences.find(o=>o.entryId===listedAction.id&&o.dueAt==='2026-03-30T09:00:00.000Z');assert.ok(actionOccurrence);
+result=issue(state,'LOG_ACTION','2026-03-30T09:03:00Z',{actionId:action.id,durationMinutes:45,results:{effort:8}});state=result.state;
 assert.equal(state.actionLogs.length,1);
+assert.deepEqual(new Set(state.actionLogs[0].contexts),new Set([current.children[0].id,actionOccurrence.id]),'eligible contexts resolve automatically');
+assert.equal(state.occurrences.find(o=>o.id===actionOccurrence.id).status,'COMPLETED');
 assert.equal(overview(state).uniqueMinutes,45);
 state=issue(state,'LOG_ACTION','2026-03-30T09:07:00Z',{actionId:action.id,durationMinutes:31,results:{effort:6},occurredAt:'2026-03-30T06:00:00Z'}).state;
 assert.equal(state.actionLogs.at(-1).at,'2026-03-30T06:00:00.000Z','actual occurrence time survives logging later');
@@ -79,13 +83,15 @@ assert.equal(fresh.periods.find(x=>x.actionId===avoid.id).status,'SUCCESS','clea
 assert.equal(fresh.actionLogs.length,0);
 
 result=issue(fresh,'ADD_DEFINITION','2026-06-02T09:00:00Z',{kind:'actions',data:{name:'Draft',completion:{type:'quantity',target:1}}});fresh=result.state;const draft=result.value;
+result=issue(fresh,'ADD_DEFINITION','2026-06-02T09:00:00Z',{kind:'actions',data:{name:'Publish',completion:{type:'quantity',target:1}}});fresh=result.state;const publish=result.value;
 result=issue(fresh,'ADD_DEFINITION','2026-06-02T09:00:00Z',{kind:'blocks',data:{name:'Write article',type:'workflow'}});fresh=result.state;const flow=result.value;
 fresh=issue(fresh,'ADD_RELATIONSHIP','2026-06-02T09:00:00Z',{blockId:flow.id,kind:'Action',refId:draft.id}).state;
-fresh=issue(fresh,'ADD_RELATIONSHIP','2026-06-02T09:00:00Z',{blockId:flow.id,kind:'Action',refId:draft.id}).state;
+assert.throws(()=>issue(fresh,'ADD_RELATIONSHIP','2026-06-02T09:00:00Z',{blockId:flow.id,kind:'Action',refId:draft.id}),/same Action/);
+fresh=issue(fresh,'ADD_RELATIONSHIP','2026-06-02T09:00:00Z',{blockId:flow.id,kind:'Action',refId:publish.id}).state;
 fresh=issue(fresh,'RUN_NOW','2026-06-02T09:00:00Z',{blockId:flow.id}).state;
 let workflow=fresh.runs.find(x=>x.blockId===flow.id);
 assert.equal(workflow.children[1].status,'LOCKED');
-fresh=issue(fresh,'LOG_ACTION','2026-06-02T09:01:00Z',{actionId:draft.id,quantity:1,contexts:[workflow.children[0].id]}).state;
+fresh=issue(fresh,'LOG_ACTION','2026-06-02T09:01:00Z',{actionId:draft.id,quantity:1}).state;
 workflow=fresh.runs.find(x=>x.blockId===flow.id);
 assert.equal(workflow.children[1].status,'OPEN','workflow unlocks next step');
 fresh=issue(fresh,'RETURN_STEP','2026-06-02T09:02:00Z',{runId:workflow.id,childId:workflow.children[0].id}).state;
@@ -134,4 +140,32 @@ assert.equal(avoiding.runs[0].status,'COMPLETED','zero violations completes an A
 avoiding=issue(avoiding,'LOG_ACTION','2026-06-02T09:00:00Z',{actionId:avoidAction.id,quantity:1}).state;
 avoiding=reconcile(avoiding,at('2026-06-03T00:01:00Z'));
 assert.equal(avoiding.runs[1].status,'MISSED','a violation fails the required Avoid child');
+
+let rules=emptyState(),made=[];
+for(const name of ['One','Two','Three']){const next=issue(rules,'ADD_DEFINITION','2026-07-01T09:00:00Z',{kind:'actions',data:{name,completion:{type:'quantity',target:1}}});rules=next.state;made.push(next.value);}
+add=issue(rules,'ADD_DEFINITION','2026-07-01T09:00:00Z',{kind:'blocks',data:{name:'Flexible Routine',type:'routine',config:{completionMode:'count',completionValue:2,afterMinimum:'allow_extra'}}});rules=add.state;const flexible=add.value;
+for(const [index,a] of made.entries())rules=issue(rules,'ADD_RELATIONSHIP','2026-07-01T09:00:00Z',{blockId:flexible.id,kind:'Action',refId:a.id,required:index===0}).state;
+rules=issue(rules,'RUN_NOW','2026-07-01T09:00:00Z',{blockId:flexible.id}).state;let flexRun=rules.runs.find(r=>r.blockId===flexible.id);
+rules=issue(rules,'LOG_ACTION','2026-07-01T09:01:00Z',{actionId:made[1].id,quantity:1}).state;
+assert.equal(rules.runs.find(r=>r.id===flexRun.id).minimumReachedAt,undefined,'count alone cannot bypass required children');
+rules=issue(rules,'LOG_ACTION','2026-07-01T09:02:00Z',{actionId:made[0].id,quantity:1}).state;flexRun=rules.runs.find(r=>r.id===flexRun.id);
+assert.ok(flexRun.minimumReachedAt);assert.equal(flexRun.status,'IN_PROGRESS','allow-extra keeps a satisfied Run open');
+rules=issue(rules,'FINISH_RUN','2026-07-01T09:03:00Z',{runId:flexRun.id}).state;assert.equal(rules.runs.find(r=>r.id===flexRun.id).status,'COMPLETED');
+
+let tree=emptyState(),treeBlocks=[];
+for(const name of ['Root','Left','Right','Shared']){const next=issue(tree,'ADD_DEFINITION','2026-07-01T10:00:00Z',{kind:'blocks',data:{name,type:'collection'}});tree=next.state;treeBlocks.push(next.value);}
+tree=issue(tree,'ADD_RELATIONSHIP','2026-07-01T10:01:00Z',{blockId:treeBlocks[0].id,kind:'Block',refId:treeBlocks[1].id}).state;
+tree=issue(tree,'ADD_RELATIONSHIP','2026-07-01T10:02:00Z',{blockId:treeBlocks[0].id,kind:'Block',refId:treeBlocks[2].id}).state;
+tree=issue(tree,'ADD_RELATIONSHIP','2026-07-01T10:03:00Z',{blockId:treeBlocks[1].id,kind:'Block',refId:treeBlocks[3].id}).state;
+assert.throws(()=>issue(tree,'ADD_RELATIONSHIP','2026-07-01T10:04:00Z',{blockId:treeBlocks[2].id,kind:'Block',refId:treeBlocks[3].id}),/already exists at/);
+assert.throws(()=>issue(tree,'ADD_RELATIONSHIP','2026-07-01T10:04:00Z',{blockId:treeBlocks[3].id,kind:'Block',refId:treeBlocks[0].id}),/Circular/);
+
+let fair=emptyState();
+for(const name of ['Chest','Legs']){const next=issue(fair,'ADD_DEFINITION','2026-07-01T11:00:00Z',{kind:'actions',data:{name,completion:{type:'quantity',target:1}}});fair=next.state;made[name==='Chest'?0:1]=next.value;}
+add=issue(fair,'ADD_DEFINITION','2026-07-01T11:00:00Z',{kind:'blocks',data:{name:'Training rotation',type:'cycle',config:{smallCyclesPerBig:2}}});fair=add.state;const fairCycle=add.value;
+fair=issue(fair,'ADD_RELATIONSHIP','2026-07-01T11:00:00Z',{blockId:fairCycle.id,kind:'Action',refId:made[0].id,weight:4}).state;
+fair=issue(fair,'ADD_RELATIONSHIP','2026-07-01T11:00:00Z',{blockId:fairCycle.id,kind:'Action',refId:made[1].id,weight:1}).state;
+fair=issue(fair,'ACTIVATE','2026-07-01T11:00:00Z',{blockId:fairCycle.id}).state;
+const sequence=fair.cycles[0].sequence.map(x=>fair.actions.find(a=>a.id===x.refId).name);
+assert.deepEqual(sequence,['Chest','Chest','Legs','Chest','Chest'],'weighted Cycle positions are spread deterministically');
 console.log('PASS: snapshots, DST rollover, missed routines, Action/Todo distinction, one log across contexts, Results, cycles, alarms, Avoid zero periods, Workflow, Target and atomic backups');

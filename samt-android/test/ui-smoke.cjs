@@ -50,6 +50,26 @@ async function connect(){
   assert.equal(state.runs.filter(r=>r.status==='IN_PROGRESS').length,2);
   await capture('ui-starters.png');
 
+  await evaluate(`[...document.querySelectorAll('article.card')].find(x=>x.querySelector('h2')?.textContent==='Daily prayer').querySelector('[data-action=block-detail]').click()`);
+  await until(`document.querySelector('.section h2')?.textContent === 'Daily prayer'`);
+  await evaluate(`document.querySelector('[data-action=open-run]').click()`);
+  await until(`!![...document.querySelectorAll('.modal .row')].find(x=>x.querySelector('strong')?.textContent==='Dhuhr')`);
+  await evaluate(`[...document.querySelectorAll('.modal .row')].find(x=>x.querySelector('strong')?.textContent==='Dhuhr').querySelector('[data-action=log-run-child]').click()`);
+  await until(`document.querySelector('.modal h2')?.textContent === 'Log Dhuhr'`);
+  await evaluate(`document.querySelector('[name=quantity]').value='1';document.querySelector('[name^=result_]').value='8';document.querySelector('#editor').requestSubmit()`);
+  await until(`JSON.parse(localStorage.getItem('samt.android.v3')).actionLogs.length === 1`);
+  const logged=await evaluate(`JSON.parse(localStorage.getItem('samt.android.v3'))`);
+  assert.equal(logged.runs.find(r=>r.blockSnapshot.name==='Daily prayer').children.find(c=>c.definitionSnapshot.name==='Dhuhr').status,'DONE');
+
+  await evaluate(`document.querySelector('.top [data-action=quick-log]').click()`);
+  await until(`document.querySelector('h1')?.textContent === 'Quick log'`);
+  await evaluate(`document.querySelector('.bottom [data-route=blocks]').click();document.querySelector('[data-action=new-block]').click()`);
+  await until(`document.querySelector('form[data-form=block]') !== null`);
+  await evaluate(`const s=document.querySelector('form[data-form=block] [name=type]');s.value='collection';s.dispatchEvent(new Event('change',{bubbles:true}))`);
+  assert.equal(await evaluate(`document.querySelector('[data-block-types="target"]').hidden`),true);
+  assert.equal(await evaluate(`document.querySelector('[data-block-types="collection action_list"]').hidden`),false);
+  await evaluate(`document.querySelector('.modal [data-action=close-modal]').click()`);
+
   await evaluate('document.querySelector("[data-action=theme]").click()');
   await evaluate('document.querySelector("[data-action=theme]").click()');
   await until('document.documentElement.dataset.theme === "dark"');

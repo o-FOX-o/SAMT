@@ -21,13 +21,13 @@ jobs:
       - name: Check mobile interface
         run: bash test/ui-smoke.sh
         working-directory: samt-android
-      - name: Build Android preview
-        run: gradle :app:assembleDebug
+      - name: Build signed Android preview
+        run: gradle :app:assembleRelease
         working-directory: samt-android
       - uses: actions/upload-artifact@v4
         with:
           name: samt-android-preview
-          path: samt-android/app/build/outputs/apk/debug/app-debug.apk
+          path: samt-android/app/build/outputs/apk/release/app-release.apk
       - uses: actions/upload-artifact@v4
         with:
           name: samt-screen-preview

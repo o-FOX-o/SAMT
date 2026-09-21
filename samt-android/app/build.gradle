@@ -2,6 +2,8 @@ plugins {
     id 'com.android.application'
 }
 
+def previewBuild = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+
 android {
     namespace 'app.samt.android'
     compileSdk 35
@@ -10,13 +12,26 @@ android {
         applicationId 'app.samt.android'
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName '0.1'
+        versionCode 20000 + previewBuild
+        versionName "0.2.${previewBuild}"
+    }
+
+    signingConfigs {
+        preview {
+            storeFile rootProject.file('signing/samt-preview.keystore')
+            storePassword 'samt-preview'
+            keyAlias 'samt-preview'
+            keyPassword 'samt-preview'
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.preview
+        }
         release {
             minifyEnabled false
+            signingConfig signingConfigs.preview
         }
     }
 

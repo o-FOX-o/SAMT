@@ -43,6 +43,7 @@ function weekStart(key,first=1) {
 }
 export function periodBounds(kind,instant,settings={}) {
   const zone=settings.timezone||'Europe/London',first=settings.weekStartsOn??1;
+  if(kind==='all_time')return {key:'all_time',start:'1970-01-01T00:00:00.000Z',end:'9999-12-31T23:59:59.999Z',timezone:zone};
   const today=localKey(instant,zone); let start=today,end=dayShift(today,1);
   if(kind==='weekly') {start=weekStart(today,first);end=dayShift(start,7);}
   if(kind==='monthly') {start=today.slice(0,7)+'-01';const d=new Date(start+'T12:00:00Z');d.setUTCMonth(d.getUTCMonth()+1);end=d.toISOString().slice(0,10);}
@@ -60,6 +61,21 @@ function references(s,blockId,targetId,visited=new Set()) {
   if(visited.has(blockId))return false;
   visited.add(blockId);
   return (byId(s,'blocks',blockId)?.relationships||[]).some(r=>r.kind==='Block'&&references(s,r.refId,targetId,visited));
+}
+function assertUniqueBlockTree(s,root) {
+  const seen=new Map([[root.id,[root.name]]]);
+  function walk(block,path,ancestors) {
+    for(const r of block.relationships||[]) {
+      if(r.kind!=='Block')continue;
+      const child=byId(s,'blocks',r.refId);if(!child)continue;
+      const next=[...path,child.name];
+      insist(!ancestors.has(child.id),`Circular Block path: ${next.join(' → ')}`);
+      const existing=seen.get(child.id);
+      insist(!existing,`${child.name} already exists at: ${existing?.join(' → ')}`);
+      seen.set(child.id,next);walk(child,next,new Set([...ancestors,child.id]));
+    }
+  }
+  walk(root,[root.name],new Set([root.id]));
 }
 export function validate(s) {
   insist(s&&typeof s==='object'&&s.schemaVersion===VERSION,'Unsupported SAMT schema.');
@@ -85,6 +101,10 @@ export function validate(s) {
       insist(!!byId(s,r.kind==='Action'?'actions':'blocks',r.refId),'Missing child definition.');
       if(r.kind==='Block')insist(!references(s,r.refId,block.id),'Circular Block reference.');
     }
+    const directActions=block.relationships.filter(r=>r.kind==='Action').map(r=>r.refId);
+    insist(new Set(directActions).size===directActions.length,'The same Action cannot appear twice in one Block.');
+    const directBlocks=block.relationships.filter(r=>r.kind==='Block').map(r=>r.refId);
+    insist(new Set(directBlocks).size===directBlocks.length,'The same Block cannot appear twice in one Block.');
     if(block.type==='action_list')for(const e of block.entries||[]) {
       insist(e.kind==='Action'||e.kind==='Todo','Invalid Action List entry.');
       if(e.kind==='Action')insist(!!byId(s,'actions',e.refId),'Action entry has no Action.');
@@ -99,6 +119,7 @@ export function validate(s) {
         insist(!(off[i].start<(off[j].end||'9999')&&off[j].start<(off[i].end||'9999')),'Off Periods cannot overlap.');
     }
   }
+  for(const block of s.blocks)assertUniqueBlockTree(s,block);
   return true;
 }
 function record(s,event,data,at) {s.history.push({id:id('history'),event,at:iso(at),...data});}
@@ -135,7 +156,27 @@ function createRun(s,block,at,bounds=null) {
   if(block.type==='workflow')r.children.forEach((child,index)=>{if(index)child.status='LOCKED';});
   s.runs.push(r);record(s,'run_started',{runId:r.id,blockId:block.id},at);return r;
 }
-function finishRun(s,run,at) {
+function runProgress(run) {
+  const children=run.children||[],done=children.filter(x=>x.status==='DONE').length;
+  const required=children.filter(x=>x.required),requiredDone=required.every(x=>x.status==='DONE');
+  const config=run.blockSnapshot?.config||{},mode=config.completionMode||'required_only';
+  let threshold=false;
+  if(mode==='count')threshold=done>=Math.max(1,Number(config.completionValue)||1);
+  else if(mode==='percentage')threshold=(children.length?done/children.length*100:100)>=Math.max(0,Number(config.completionValue)||0);
+  else if(mode==='manual'||mode==='open_ended')threshold=false;
+  else threshold=requiredDone;
+  return {done,total:children.length,required:required.length,requiredDone,
+    percentage:children.length?Math.min(100,done/children.length*100):100,
+    satisfied:requiredDone&&threshold,mode};
+}
+function maybeFinishRun(s,run,at) {
+  if(run.status!=='IN_PROGRESS')return;
+  const progress=runProgress(run),policy=run.blockSnapshot?.config?.afterMinimum||'auto_finish';
+  run.completionPercentage=progress.percentage;
+  if(progress.satisfied&&!run.minimumReachedAt)run.minimumReachedAt=iso(at);
+  if(progress.satisfied&&(policy==='auto_finish'||progress.done===progress.total||run.type==='workflow'))finishRun(s,run,at);
+}
+function finishRun(s,run,at,manualSuccess=false) {
   if(run.status!=='IN_PROGRESS')return;
   const end=run.deadlineAt&&run.deadlineAt<iso(at)?run.deadlineAt:iso(at);
   for(const child of run.children) {
@@ -151,9 +192,9 @@ function finishRun(s,run,at) {
       if(nested.length>=Math.max(1,expected)&&nested.every(r=>r.status==='COMPLETED')){child.status='DONE';child.resolvedAt=iso(at);}
     }
   }
-  const required=run.children.filter(x=>x.required),done=required.filter(x=>x.status==='DONE');
-  run.status=done.length===required.length?'COMPLETED':done.length?'MISSED':'MISSED';
-  run.finishedAt=iso(at);record(s,`run_${run.status.toLowerCase()}`,{runId:run.id,blockId:run.blockId,completed:done.length,required:required.length},at);
+  const progress=runProgress(run);run.completionPercentage=progress.percentage;
+  run.status=manualSuccess||progress.satisfied?'COMPLETED':'MISSED';
+  run.finishedAt=iso(at);record(s,`run_${run.status.toLowerCase()}`,{runId:run.id,blockId:run.blockId,completed:progress.done,required:progress.required},at);
 }
 function advanceWorkflow(run,child,at) {
   if(run.type!=='workflow'||child.status!=='DONE')return;
@@ -300,13 +341,27 @@ function ensureCycles(s,at) {
   for(const b of s.blocks.filter(x=>x.type==='cycle'&&x.status!=='ARCHIVED'&&s.activations.some(a=>a.blockId===x.id&&a.status==='ACTIVE'))) {
     const existing=s.cycles.find(y=>y.blockId===b.id);
     if(existing?.sequence.length)continue;
-    const slots=[];for(const r of b.relationships||[])for(let n=0;n<Math.max(1,Math.min(20,Number(r.weight)||1));n++)slots.push({relationshipId:r.id,refId:r.refId,kind:r.kind});
+    const participants=(b.relationships||[]).map((r,index)=>({r,index,weight:Math.max(1,Math.min(20,Number(r.weight)||1)),score:0}));
+    const slots=[],total=participants.reduce((n,p)=>n+p.weight,0);
+    for(let n=0;n<total;n++) {
+      for(const p of participants)p.score+=p.weight;
+      participants.sort((a,b)=>b.score-a.score||a.index-b.index);
+      const chosen=participants[0];chosen.score-=total;
+      slots.push({relationshipId:chosen.r.id,refId:chosen.r.refId,kind:chosen.r.kind});
+    }
     if(existing)existing.sequence=slots;
-    else s.cycles.push({id:id('cycle'),blockId:b.id,sequence:slots,index:0,round:1,createdAt:iso(at),history:[]});
+    else s.cycles.push({id:id('cycle'),blockId:b.id,sequence:slots,index:0,round:1,bigRound:1,createdAt:iso(at),history:[]});
   }
 }
 export function reconcile(input,at) {
   const s=copy(input);validate(s);reconcileRoutines(s,at);reconcileOccurrences(s,at);reconcilePeriods(s,at);reconcileAvoid(s,at);ensureCycles(s,at);return s;
+}
+function eligibleActionContexts(s,actionId,at) {
+  const when=iso(at),refs=[];
+  for(const o of s.occurrences)if(o.itemSnapshot?.id===actionId&&['OPEN','OVERDUE','CARRIED'].includes(o.status)&&o.dueAt<=when)refs.push(o.id);
+  for(const run of s.runs)if(run.status==='IN_PROGRESS'&&run.startedAt<=when&&(!run.deadlineAt||when<run.deadlineAt))
+    for(const child of run.children)if(child.kind==='Action'&&child.refId===actionId&&child.status==='OPEN'&&(!child.availableAt||child.availableAt<=when))refs.push(child.id);
+  return [...new Set(refs)];
 }
 function addActionLog(s,command,at) {
   const a=byId(s,'actions',command.actionId);insist(a&&a.status!=='ARCHIVED','Action unavailable.');
@@ -314,9 +369,13 @@ function addActionLog(s,command,at) {
   insist(Number.isFinite(quantity)&&quantity>=0&&Number.isFinite(durationMinutes)&&durationMinutes>=0,'Invalid quantity or time.');
   const kind=a.completion?.type||'quantity';if(a.direction!=='Avoid')insist((kind==='time'?durationMinutes:quantity)>0,'Log a positive amount.');
   const results={};for(const f of a.resultFields||[])results[f.id]=resultValue(f,command.results?.[f.id],s);
-  const contexts=[...new Set(command.contexts||[])];
   const occurredAt=command.occurredAt?iso(command.occurredAt):iso(at);
   insist(Date.parse(occurredAt)<=Number(at)+600000,'The Action time cannot be in the future.');
+  const auto=eligibleActionContexts(s,a.id,at),contexts=[...new Set([...auto,...(command.contexts||[])])];
+  for(const ref of contexts) {
+    const occurrence=byId(s,'occurrences',ref),child=s.runs.flatMap(r=>r.children).find(c=>c.id===ref);
+    insist(occurrence?.itemSnapshot?.id===a.id||child?.refId===a.id,`Context ${ref} does not belong to this Action.`);
+  }
   const log={id:id('log'),actionId:a.id,actionSnapshot:copy(a),resultSnapshots:copy(a.resultFields),at:occurredAt,recordedAt:iso(at),quantity,durationMinutes,results,contexts,notes:String(command.notes||'')};
   s.actionLogs.push(log);
   for(const ref of contexts) {
@@ -329,6 +388,7 @@ function addActionLog(s,command,at) {
       child.actionLogIds=[...(child.actionLogIds||[]),log.id];child.actionLogId=log.id;
       const required=completion.type==='time'?Math.max(1,Number(completion.minimumMinutes)||1):Math.max(1,Number(completion.target)||1);
       if(child.progress>=required){child.status='DONE';child.completedAt=iso(at);advanceWorkflow(run,child,at);}
+      maybeFinishRun(s,run,at);
     }
   }
   record(s,'action_logged',{actionLogId:log.id,actionId:a.id,contexts,occurredAt},at);return log;
@@ -471,7 +531,7 @@ export function execute(input,command,at) {
     case 'RESOLVE_CHILD':{
       const run=byId(s,'runs',command.runId),child=run?.children.find(c=>c.id===command.childId);insist(child&&run.status==='IN_PROGRESS','Open Run child not found.');
       insist(['DONE','SKIPPED'].includes(command.status),'Invalid child outcome.');child.status=command.status;child.resolvedAt=iso(at);child.notes=command.notes||'';
-      advanceWorkflow(run,child,at);record(s,'run_child_resolved',{runId:run.id,childId:child.id,status:child.status},at);value=child;break;
+      advanceWorkflow(run,child,at);maybeFinishRun(s,run,at);record(s,'run_child_resolved',{runId:run.id,childId:child.id,status:child.status},at);value=child;break;
     }
     case 'RETURN_STEP':{
       const run=byId(s,'runs',command.runId);insist(run?.type==='workflow'&&run.status==='IN_PROGRESS','Open Workflow Run not found.');
@@ -480,14 +540,18 @@ export function execute(input,command,at) {
       run.children[target].status='OPEN';run.transitions.push({id:id('transition'),event:'RETURN_STEP',at:iso(at),to:command.childId});
       record(s,'workflow_returned',{runId:run.id,childId:command.childId},at);value=run;break;
     }
-    case 'FINISH_RUN':{const run=byId(s,'runs',command.runId);insist(run,'Run not found.');finishRun(s,run,at);value=run;break;}
+    case 'FINISH_RUN':{const run=byId(s,'runs',command.runId);insist(run,'Run not found.');finishRun(s,run,at,true);value=run;break;}
     case 'RESOLVE_CYCLE':{
       const cycle=s.cycles.find(x=>x.blockId===command.blockId);insist(cycle&&cycle.sequence.length,'Cycle has no participants.');
       const slot=cycle.sequence[cycle.index];cycle.history.push({id:id('cycle_event'),at:iso(at),index:cycle.index,outcome:command.outcome,slot:copy(slot)});
       const block=byId(s,'blocks',cycle.blockId),policy=block?.config?.missedPolicy||s.settings.defaults?.cycleMissed||'keep_position';
       if(command.outcome==='COMPLETED'||command.outcome==='MISSED'&&policy==='skip_to_next')cycle.index++;
       if(command.outcome==='MISSED'&&policy==='restart')cycle.index=0;
-      if(cycle.index>=cycle.sequence.length) {cycle.index=0;cycle.round++;}
+      if(cycle.index>=cycle.sequence.length) {
+        cycle.index=0;cycle.round++;
+        const smallPerBig=Math.max(1,Number(block?.config?.smallCyclesPerBig)||1);
+        cycle.bigRound=Math.floor((cycle.round-1)/smallPerBig)+1;
+      }
       record(s,'cycle_resolved',{blockId:cycle.blockId,outcome:command.outcome,position:cycle.index},at);value=cycle;break;
     }
     case 'ADD_REVIEW':value={id:id('review'),at:iso(at),period:command.period||'week',notes:String(command.notes||''),highlights:String(command.highlights||''),next:String(command.next||'')};s.reviews.push(value);record(s,'review_saved',{reviewId:value.id},at);break;
@@ -534,11 +598,14 @@ export function home(s,at) {
   const date=iso(at),open=s.occurrences.filter(x=>['OPEN','OVERDUE','CARRIED'].includes(x.status));
   const due=open.filter(x=>x.dueAt<=date).sort((a,b)=>a.dueAt.localeCompare(b.dueAt));
   const today=localKey(at,s.settings.timezone),week=periodBounds('weekly',at,s.settings);
-  return {now:s.runs.find(x=>x.status==='IN_PROGRESS')||due[0]||null,due,avoid:s.actions.filter(x=>x.direction==='Avoid'),
+  const upcoming=open.filter(x=>x.dueAt>date).sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).slice(0,8);
+  const cycle=s.cycles.map(c=>{const slot=c.sequence[c.index],block=byId(s,'blocks',c.blockId);if(!slot||!block)return null;return {kind:'cycle',blockId:block.id,blockSnapshot:copy(block),itemSnapshot:copy(byId(s,slot.kind==='Action'?'actions':'blocks',slot.refId)),cycleId:c.id};}).find(Boolean);
+  const target=s.periods.filter(p=>p.status==='OPEN'&&p.blockId).sort((a,b)=>a.end.localeCompare(b.end))[0];
+  return {now:s.runs.find(x=>x.status==='IN_PROGRESS')||due[0]||cycle||(target?{kind:'target',blockSnapshot:target.blockSnapshot,period:target}:null)||upcoming[0]||null,due,avoid:s.actions.filter(x=>x.direction==='Avoid'),
     today:open.filter(x=>localKey(x.dueAt,s.settings.timezone)===today),
     week:open.filter(x=>x.dueAt>=week.start&&x.dueAt<week.end),
-    project:s.runs.find(x=>x.type==='project'&&x.status==='IN_PROGRESS')||null,
-    upcoming:open.filter(x=>x.dueAt>date).sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).slice(0,8)};
+    project:s.runs.find(x=>x.type==='project'&&x.status==='IN_PROGRESS'&&x.blockSnapshot?.config?.primary)||s.runs.find(x=>x.type==='project'&&x.status==='IN_PROGRESS')||null,
+    upcoming};
 }
 export function alarmRequests(s,at) {
   const current=Number(at),items=[];

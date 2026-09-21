@@ -14,8 +14,13 @@ promise of full SAMT parity.
 ## Build
 
 Use Android Studio with JDK 17 and Android SDK 35, or run
-`./gradlew :app:assembleDebug`. The GitHub Actions workflow also builds an
+`./gradlew :app:assembleRelease`. The GitHub Actions workflow also builds an
 installable preview APK. Minimum Android version is 8.0 (API 26).
+
+Preview builds use the same development signing key and increasing version
+codes so a later APK can update an earlier APK without uninstalling it and
+losing phone-local data. This checked-in key is deliberately only for personal
+preview builds; a private production key is required before public release.
 
 Run the domain checks with `npm test` or `node test/engine.test.js`.
 
