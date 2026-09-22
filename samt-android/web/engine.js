@@ -239,7 +239,7 @@ function createRun(s,block,at,bounds=null,cadence=block.config?.period||'manual'
         child.milestone=!!rc.milestone;
       }
       return child;
-    }),transitions:[],finishedAt:null,activationId:s.activations.find(x=>x.blockId===block.id)?.id||null};
+    }),transitions:[],scopeChanges:project?[]:undefined,finishedAt:null,activationId:s.activations.find(x=>x.blockId===block.id)?.id||null};
   if(block.type==='workflow')r.children.forEach((child,index)=>{if(index)child.status='LOCKED';});
   if(project)refreshProjectChildren(r,at);
   s.runs.push(r);record(s,'run_started',{runId:r.id,blockId:block.id},at);return r;
@@ -590,6 +590,37 @@ function addActionLog(s,command,at) {
   }
   record(s,'action_logged',{actionLogId:log.id,actionId:a.id,contexts,occurredAt},at);return log;
 }
+function mutableProjectRun(run){return run?.type==='project'&&(isWorkingRun(run)||['BLOCKED','PAUSED'].includes(run.status));}
+function projectChildFromRelationship(s,run,rel,at) {
+  const rc=rel.config||{},child={id:id('child'),relationshipId:rel.id,kind:rel.kind,refId:rel.refId,required:rel.required!==false,status:'OPEN',inScope:true,scopeAddedAt:iso(at),
+    config:copy(rc),snoozedUntil:null,definitionSnapshot:copy(byId(s,rel.kind==='Action'?'actions':'blocks',rel.refId))};
+  child.availableAt=relativeInstant(run.startedAt,rc.availableAt,rc.availableOffsetMinutes);
+  child.dueAt=relativeInstant(run.startedAt,rc.deadlineAt,rc.deadlineOffsetMinutes);child.milestone=!!rc.milestone;return child;
+}
+function applyProjectScopeChange(s,block,rel,runIds,type,at) {
+  const selected=[...new Set(runIds||[])];if(!selected.length)return;
+  for(const runId of selected) {
+    const run=byId(s,'runs',runId);insist(run&&run.blockId===block.id&&mutableProjectRun(run),'Selected Project Run cannot be changed.');
+    run.scopeChanges=run.scopeChanges||[];let child=run.children.find(c=>c.relationshipId===rel.id),before=null,after=null;
+    if(type==='ADD') {
+      insist(!child||child.inScope===false,'Project scope already contains this child.');
+      child=projectChildFromRelationship(s,run,rel,at);run.children.push(child);after=copy(child);
+    } else if(type==='EDIT') {
+      insist(child&&child.inScope!==false&&child.status!=='REMOVED','Project Run no longer contains this child.');
+      before=copy({required:child.required,config:child.config,availableAt:child.availableAt,dueAt:child.dueAt,milestone:child.milestone});
+      child.required=rel.required!==false;child.config=copy(rel.config||{});
+      child.availableAt=relativeInstant(run.startedAt,child.config.availableAt,child.config.availableOffsetMinutes);
+      child.dueAt=relativeInstant(run.startedAt,child.config.deadlineAt,child.config.deadlineOffsetMinutes);child.milestone=!!child.config.milestone;
+      after=copy({required:child.required,config:child.config,availableAt:child.availableAt,dueAt:child.dueAt,milestone:child.milestone});
+    } else if(type==='REMOVE') {
+      insist(child&&child.inScope!==false&&child.status!=='REMOVED','Project Run no longer contains this child.');
+      before=copy(child);child.inScope=false;child.statusBeforeScopeRemoval=child.status;child.status='REMOVED';child.scopeRemovedAt=iso(at);after=copy(child);
+    }
+    const event={id:id('scope_change'),at:iso(at),type,relationshipId:rel.id,childId:child?.id||null,before,after,definitionRelationshipSnapshot:copy(rel)};
+    run.scopeChanges.push(event);refreshProjectChildren(run,at);maybeFinishRun(s,run,at);
+    record(s,'project_scope_changed',{runId:run.id,blockId:block.id,scopeChangeId:event.id,type,relationshipId:rel.id},at);
+  }
+}
 function addDefinition(s,kind,data,at) {
   insist(['categories','tags','units','actions','blocks'].includes(kind),'Invalid definition.');
   const obj=copy(data);obj.id=obj.id||id(kind.slice(0,-1));obj.createdAt=iso(at);obj.updatedAt=iso(at);obj.status=obj.status||'ACTIVE';
@@ -637,12 +668,12 @@ function dependencies(s,kind,target) {
   if(kind==='actions')for(const b of s.blocks) {for(const r of b.relationships||[])if(r.kind==='Action'&&r.refId===target)refs.push(b.name);for(const e of b.entries||[])if(e.kind==='Action'&&e.refId===target)refs.push(b.name);if(b.type==='project'&&(b.config?.conditions||[]).some(c=>c.type==='result'&&c.actionId===target))refs.push(`${b.name} completion condition`);}
   if(kind==='actions'){
     if(s.occurrences.some(o=>o.itemSnapshot?.id===target&&['OPEN','OVERDUE','CARRIED'].includes(o.status)))refs.push('open occurrence');
-    if(s.runs.some(run=>run.status==='IN_PROGRESS'&&run.children.some(c=>c.kind==='Action'&&c.refId===target&&c.status==='OPEN')))refs.push('active Run');
+    if(s.runs.some(run=>(run.status==='IN_PROGRESS'||mutableProjectRun(run))&&run.children.some(c=>c.kind==='Action'&&c.refId===target&&c.inScope!==false&&!PROJECT_CHILD_TERMINAL.includes(c.status))))refs.push('active Run');
   }
   if(kind==='blocks'){
     for(const b of s.blocks){for(const r of b.relationships||[])if(r.kind==='Block'&&r.refId===target)refs.push(b.name);if(b.type==='project'&&(b.config?.conditions||[]).some(c=>c.type==='target'&&c.targetBlockId===target))refs.push(`${b.name} completion condition`);}
     if(s.activations.some(a=>a.blockId===target&&a.status==='ACTIVE'))refs.push('active Block');
-    if(s.runs.some(r=>r.blockId===target&&r.status==='IN_PROGRESS'))refs.push('active Run');
+    if(s.runs.some(r=>r.blockId===target&&(r.status==='IN_PROGRESS'||mutableProjectRun(r))))refs.push('active Run');
   }
   if(kind==='categories')for(const tag of s.tags)if(tag.categoryId===target)refs.push(tag.name);
   if(kind==='tags')for(const a of s.actions)if((a.tagIds||[]).includes(target))refs.push(a.name);
@@ -717,16 +748,19 @@ export function execute(input,command,at) {
     case 'ADD_RELATIONSHIP':{
       const b=byId(s,'blocks',command.blockId);insist(b,'Block not found.');
       const r={id:id('relation'),kind:command.kind,refId:command.refId,required:command.required!==false,weight:command.weight||1,config:copy(command.config||{})};
-      b.relationships.push(r);b.updatedAt=iso(at);record(s,'relationship_added',{blockId:b.id,relationshipId:r.id},at);value=r;break;
+      b.relationships.push(r);if(b.type==='project')applyProjectScopeChange(s,b,r,command.scopeRunIds,'ADD',at);
+      b.updatedAt=iso(at);record(s,'relationship_added',{blockId:b.id,relationshipId:r.id,scopeRunIds:copy(command.scopeRunIds||[])},at);value=r;break;
     }
     case 'EDIT_RELATIONSHIP':{
       const b=byId(s,'blocks',command.blockId),r=b?.relationships?.find(x=>x.id===command.relationshipId);insist(r,'Relationship not found.');
       Object.assign(r,{required:command.required!==false,weight:Math.max(1,Number(command.weight)||1),config:copy(command.config||{})});
-      b.updatedAt=iso(at);record(s,'relationship_edited',{blockId:b.id,relationshipId:r.id},at);value=r;break;
+      if(b.type==='project')applyProjectScopeChange(s,b,r,command.scopeRunIds,'EDIT',at);
+      b.updatedAt=iso(at);record(s,'relationship_edited',{blockId:b.id,relationshipId:r.id,scopeRunIds:copy(command.scopeRunIds||[])},at);value=r;break;
     }
     case 'REMOVE_RELATIONSHIP':{
       const b=byId(s,'blocks',command.blockId),r=b?.relationships?.find(x=>x.id===command.relationshipId);insist(r,'Relationship not found.');
-      b.relationships=b.relationships.filter(x=>x.id!==r.id);b.updatedAt=iso(at);record(s,'relationship_removed',{blockId:b.id,relationshipId:r.id},at);value=r;break;
+      if(b.type==='project')applyProjectScopeChange(s,b,r,command.scopeRunIds,'REMOVE',at);
+      b.relationships=b.relationships.filter(x=>x.id!==r.id);b.updatedAt=iso(at);record(s,'relationship_removed',{blockId:b.id,relationshipId:r.id,scopeRunIds:copy(command.scopeRunIds||[])},at);value=r;break;
     }
     case 'ADD_ENTRY':{
       const b=byId(s,'blocks',command.blockId);insist(b?.type==='action_list','Action List not found.');
@@ -766,7 +800,7 @@ export function execute(input,command,at) {
       let activation=s.activations.find(x=>x.blockId===b.id);
       if(!activation) {activation={id:id('activation'),blockId:b.id,status:'ACTIVE',startedAt:iso(at),schedule:copy(command.schedule||{period:'manual'})};s.activations.push(activation);}
       else Object.assign(activation,{status:'ACTIVE',schedule:copy(command.schedule||activation.schedule)});
-      if(['workflow','project'].includes(b.type)&&!s.runs.some(x=>x.blockId===b.id&&x.status==='IN_PROGRESS'))createRun(s,b,at);
+       if(b.type==='workflow'&&!s.runs.some(x=>x.blockId===b.id&&x.status==='IN_PROGRESS'))createRun(s,b,at);if(b.type==='project'&&!s.runs.some(x=>x.blockId===b.id&&mutableProjectRun(x)))createRun(s,b,at);
       record(s,'block_activated',{blockId:b.id},at);value=activation;break;
     }
     case 'PAUSE_BLOCK':{
@@ -967,7 +1001,7 @@ export function actionAnalysis(s,actionId) {
 export function overview(s) {
   const ids=new Set();let minutes=0;
   for(const log of s.actionLogs)if(!ids.has(log.id)){ids.add(log.id);minutes+=(log.durationMinutes||0);}
-  return {logs:ids.size,uniqueMinutes:minutes,completedRuns:s.runs.filter(x=>x.status==='COMPLETED').length,openRuns:s.runs.filter(x=>x.status==='IN_PROGRESS').length};
+  return {logs:ids.size,uniqueMinutes:minutes,completedRuns:s.runs.filter(x=>x.status==='COMPLETED').length,openRuns:s.runs.filter(x=>x.status==='IN_PROGRESS'||mutableProjectRun(x)).length};
 }
 export function home(s,at) {
   const date=iso(at),open=s.occurrences.filter(x=>['OPEN','OVERDUE','CARRIED'].includes(x.status));
@@ -976,7 +1010,7 @@ export function home(s,at) {
   const upcoming=open.filter(x=>x.dueAt>date).sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).slice(0,8);
   const cycle=s.cycles.map(c=>{const slot=c.sequence[c.index],block=byId(s,'blocks',c.blockId);if(!slot||!block)return null;return {kind:'cycle',blockId:block.id,blockSnapshot:copy(block),itemSnapshot:copy(byId(s,slot.kind==='Action'?'actions':'blocks',slot.refId)),cycleId:c.id};}).find(Boolean);
   const target=s.periods.filter(p=>p.status==='OPEN'&&p.blockId).sort((a,b)=>a.end.localeCompare(b.end))[0];
-  return {now:s.runs.find(x=>x.status==='IN_PROGRESS')||due[0]||cycle||(target?{kind:'target',blockSnapshot:target.blockSnapshot,period:target}:null)||upcoming[0]||null,due,avoid:s.actions.filter(x=>x.direction==='Avoid'),
+  return {now:s.runs.find(x=>x.status==='IN_PROGRESS'||mutableProjectRun(x))||due[0]||cycle||(target?{kind:'target',blockSnapshot:target.blockSnapshot,period:target}:null)||upcoming[0]||null,due,avoid:s.actions.filter(x=>x.direction==='Avoid'),
     today:open.filter(x=>localKey(x.dueAt,s.settings.timezone)===today),
     week:open.filter(x=>x.dueAt>=week.start&&x.dueAt<week.end),
     project:s.runs.find(x=>x.type==='project'&&['IN_PROGRESS','READY_TO_FINISH','OVERDUE','BLOCKED','PAUSED'].includes(x.status)&&x.blockSnapshot?.config?.primary)||s.runs.find(x=>x.type==='project'&&['IN_PROGRESS','READY_TO_FINISH','OVERDUE','BLOCKED','PAUSED'].includes(x.status))||null,

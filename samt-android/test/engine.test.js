@@ -271,4 +271,23 @@ resolution=issue(resolution,'RESOLVE_CHILD','2026-07-09T09:05:00Z',{runId:resolu
 assert.equal(resolutionRun.children[0].status,'EXCUSED');
 assert.equal(resolutionRun.status,'READY_TO_FINISH','excused required work remains distinct but can satisfy mandatory scope');
 
-console.log('PASS: snapshots, DST rollover, missed routines, Action/Todo distinction, shared contexts, Results, cycles, alarms, Avoid, Workflow, Project conditions/deadlines/dependencies, Target, pause/resume and data safety');
+
+let scoped=emptyState();
+let sAdd=issue(scoped,'ADD_DEFINITION','2026-07-08T09:00:00Z',{kind:'actions',data:{name:'Base work',completion:{type:'quantity',target:1}}});scoped=sAdd.state;const baseWork=sAdd.value;
+sAdd=issue(scoped,'ADD_DEFINITION','2026-07-08T09:00:00Z',{kind:'actions',data:{name:'Added scope',completion:{type:'quantity',target:1}}});scoped=sAdd.state;const addedScope=sAdd.value;
+sAdd=issue(scoped,'ADD_DEFINITION','2026-07-08T09:00:00Z',{kind:'blocks',data:{name:'Scoped Project',type:'project',config:{completionMode:'required_only',finishBehavior:'ready_to_finish'}}});scoped=sAdd.state;const scopedProject=sAdd.value;
+scoped=issue(scoped,'ADD_RELATIONSHIP','2026-07-08T09:00:00Z',{blockId:scopedProject.id,kind:'Action',refId:baseWork.id,required:true}).state;
+scoped=issue(scoped,'ACTIVATE','2026-07-08T09:00:00Z',{blockId:scopedProject.id}).state;let scopedRun=scoped.runs.find(r=>r.blockId===scopedProject.id),startRelationshipCount=scopedRun.blockSnapshot.relationships.length;
+sAdd=issue(scoped,'ADD_RELATIONSHIP','2026-07-08T09:10:00Z',{blockId:scopedProject.id,kind:'Action',refId:addedScope.id,required:false,scopeRunIds:[scopedRun.id]});scoped=sAdd.state;const liveRel=sAdd.value;scopedRun=scoped.runs.find(r=>r.id===scopedRun.id);
+assert.equal(scopedRun.blockSnapshot.relationships.length,startRelationshipCount,'scope change never rewrites the Run start snapshot');
+assert.ok(scopedRun.children.some(c=>c.relationshipId===liveRel.id&&c.inScope===true));
+assert.equal(scopedRun.scopeChanges.at(-1).type,'ADD');
+scoped=issue(scoped,'EDIT_RELATIONSHIP','2026-07-08T09:12:00Z',{blockId:scopedProject.id,relationshipId:liveRel.id,required:true,weight:1,config:{milestone:true},scopeRunIds:[scopedRun.id]}).state;scopedRun=scoped.runs.find(r=>r.id===scopedRun.id);
+assert.equal(scopedRun.children.find(c=>c.relationshipId===liveRel.id).milestone,true);
+assert.equal(scopedRun.scopeChanges.at(-1).type,'EDIT');
+scoped=issue(scoped,'REMOVE_RELATIONSHIP','2026-07-08T09:14:00Z',{blockId:scopedProject.id,relationshipId:liveRel.id,scopeRunIds:[scopedRun.id]}).state;scopedRun=scoped.runs.find(r=>r.id===scopedRun.id);
+assert.equal(scopedRun.children.find(c=>c.relationshipId===liveRel.id).status,'REMOVED');
+assert.equal(scopedRun.scopeChanges.at(-1).type,'REMOVE');
+assert.equal(scopedRun.blockSnapshot.relationships.length,startRelationshipCount,'start snapshot remains immutable after all scope changes');
+
+console.log('PASS: snapshots, DST rollover, missed routines, Action/Todo distinction, shared contexts, Results, cycles, alarms, Avoid, Workflow, Project conditions/scope/deadlines/dependencies, Target, pause/resume and data safety');
