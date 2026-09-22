@@ -1,4 +1,4 @@
-# SAMT Android — development preview
+# SAMT Android — 0.2.101 stabilization candidate
 
 This is a new SAMT Android client. Its coloured phone interface is built from
 scratch with System, Light and Dark modes. `web/engine.js` is UI-independent;
@@ -6,10 +6,10 @@ Android uses a WebView asset origin to display the local interface and a native
 bridge for alarms, calendar rollover, backups and phone permissions. There is
 no login, server or internet permission.
 
-**Status:** active development. Read [FEATURE_PARITY.md](FEATURE_PARITY.md) for
-the complete acceptance contract. Features listed there have not all passed
-through a device test yet. The APK built from this branch is a preview, not a
-promise of full SAMT parity.
+**Status:** the Plan Everything stabilization pass is implemented and covered
+by the automated engine/UI/build pipeline. Read [FEATURE_PARITY.md](FEATURE_PARITY.md)
+for the domain contract. Real-phone notification delivery still needs a physical
+device check because Android permission and battery behavior cannot be proven in CI.
 
 ## Build
 
@@ -38,3 +38,13 @@ Settings) and is reconciled both on app open and by a native midnight receiver.
 Alarms schedule through Android's AlarmManager. Exact timing and notification
 delivery depend on the relevant phone permissions. The App section in Settings
 shows their current status.
+
+
+## 0.2.101 stabilization pass
+
+This pass closes the remaining high-risk runtime gaps found during the Plan
+Everything review: optional Action List deadlines, administrative archive
+cancellation, timezone-safe future scheduling, midweek nested Routine
+activation, paused Target accounting, explicit Missed Action logs, selected
+numeric Result Targets, relationship-specific completion rules, immutable Block
+types, Android Back handling, and alarm diagnostics/test delivery.
