@@ -290,4 +290,87 @@ assert.equal(scopedRun.children.find(c=>c.relationshipId===liveRel.id).status,'R
 assert.equal(scopedRun.scopeChanges.at(-1).type,'REMOVE');
 assert.equal(scopedRun.blockSnapshot.relationships.length,startRelationshipCount,'start snapshot remains immutable after all scope changes');
 
-console.log('PASS: snapshots, DST rollover, missed routines, Action/Todo distinction, shared contexts, Results, cycles, alarms, Avoid, Workflow, Project conditions/scope/deadlines/dependencies, Target, pause/resume and data safety');
+
+
+// PLAN EVERYTHING stabilization regressions.
+// Blank Action List deadlines are truly optional.
+let peNoDeadline=emptyState();
+let peAdd=issue(peNoDeadline,'ADD_DEFINITION','2026-01-05T07:00:00Z',{kind:'blocks',data:{name:'No deadline list',type:'action_list'}});peNoDeadline=peAdd.state;const peNoDeadlineList=peAdd.value;
+peAdd=issue(peNoDeadline,'ADD_ENTRY','2026-01-05T07:00:00Z',{blockId:peNoDeadlineList.id,kind:'Todo',name:'Flexible task',schedule:{mode:'daily',time:'09:00'},deadlineMinutes:null,unfinished:'expire'});peNoDeadline=peAdd.state;const peFlexibleTodo=peAdd.value;
+peNoDeadline=issue(peNoDeadline,'ACTIVATE','2026-01-05T07:00:00Z',{blockId:peNoDeadlineList.id}).state;
+peNoDeadline=reconcile(peNoDeadline,at('2026-01-05T10:00:00Z'));
+const peNoDeadlineOcc=peNoDeadline.occurrences.find(o=>o.entryId===peFlexibleTodo.id&&o.dueAt==='2026-01-05T09:00:00.000Z');
+assert.equal(peNoDeadlineOcc.deadlineAt,null);
+assert.equal(peNoDeadlineOcc.status,'OPEN','blank deadline must not imply due-time expiry');
+
+// Archive is administrative, not failure.
+let peArchived=emptyState();
+peAdd=issue(peArchived,'ADD_DEFINITION','2026-01-05T08:00:00Z',{kind:'actions',data:{name:'Archive child',completion:{type:'quantity',target:1}}});peArchived=peAdd.state;const peArchiveAction=peAdd.value;
+peAdd=issue(peArchived,'ADD_DEFINITION','2026-01-05T08:00:00Z',{kind:'blocks',data:{name:'Archive routine',type:'routine',config:{period:'daily'}}});peArchived=peAdd.state;const peArchiveRoutine=peAdd.value;
+peArchived=issue(peArchived,'ADD_RELATIONSHIP','2026-01-05T08:00:00Z',{blockId:peArchiveRoutine.id,kind:'Action',refId:peArchiveAction.id}).state;
+peArchived=issue(peArchived,'ACTIVATE','2026-01-05T08:00:00Z',{blockId:peArchiveRoutine.id,schedule:{period:'daily'}}).state;
+const peArchivedRunId=peArchived.runs[0].id;
+peArchived=issue(peArchived,'ARCHIVE','2026-01-05T10:00:00Z',{kind:'blocks',id:peArchiveRoutine.id}).state;
+assert.equal(peArchived.runs.find(r=>r.id===peArchivedRunId).status,'CANCELLED');
+assert.equal(peArchived.runs.find(r=>r.id===peArchivedRunId).children[0].status,'SKIPPED');
+assert.equal(peArchived.runs.filter(r=>r.status==='MISSED').length,0,'archive must not manufacture missed Runs');
+
+// Timezone changes regenerate future Action List occurrences without rewriting facts.
+let peZones=emptyState();
+peAdd=issue(peZones,'ADD_DEFINITION','2026-09-22T05:00:00Z',{kind:'blocks',data:{name:'Timezone list',type:'action_list'}});peZones=peAdd.state;const peZoneList=peAdd.value;
+peAdd=issue(peZones,'ADD_ENTRY','2026-09-22T05:00:00Z',{blockId:peZoneList.id,kind:'Todo',name:'Local nine',schedule:{mode:'daily',time:'09:00'}});peZones=peAdd.state;const peZoneEntry=peAdd.value;
+peZones=issue(peZones,'ACTIVATE','2026-09-22T05:00:00Z',{blockId:peZoneList.id}).state;
+peZones=reconcile(peZones,at('2026-09-22T05:01:00Z'));
+assert.ok(peZones.occurrences.some(o=>o.entryId===peZoneEntry.id&&o.dueAt==='2026-09-22T08:00:00.000Z'&&o.status==='OPEN'));
+peZones=issue(peZones,'SET_SETTINGS','2026-09-22T05:02:00Z',{changes:{timezone:'Europe/Paris'}}).state;
+assert.ok(peZones.occurrences.some(o=>o.entryId===peZoneEntry.id&&o.dueAt==='2026-09-22T08:00:00.000Z'&&o.status==='SUPERSEDED'));
+assert.ok(peZones.occurrences.some(o=>o.entryId===peZoneEntry.id&&o.dueAt==='2026-09-22T07:00:00.000Z'&&o.status==='OPEN'));
+
+// Weekly parents only expect nested daily Runs from the nested Routine activation.
+let peMidweek=emptyState();
+peAdd=issue(peMidweek,'ADD_DEFINITION','2026-01-05T08:00:00Z',{kind:'actions',data:{name:'Daily nested action',completion:{type:'quantity',target:1}}});peMidweek=peAdd.state;const peNestedAction=peAdd.value;
+peAdd=issue(peMidweek,'ADD_DEFINITION','2026-01-05T08:00:00Z',{kind:'blocks',data:{name:'Daily nested',type:'routine',config:{period:'daily'}}});peMidweek=peAdd.state;const peNestedDaily=peAdd.value;
+peMidweek=issue(peMidweek,'ADD_RELATIONSHIP','2026-01-05T08:00:00Z',{blockId:peNestedDaily.id,kind:'Action',refId:peNestedAction.id}).state;
+peAdd=issue(peMidweek,'ADD_DEFINITION','2026-01-05T08:00:00Z',{kind:'blocks',data:{name:'Weekly parent midweek',type:'routine',config:{period:'weekly'}}});peMidweek=peAdd.state;const peMidweekParent=peAdd.value;
+peMidweek=issue(peMidweek,'ADD_RELATIONSHIP','2026-01-05T08:00:00Z',{blockId:peMidweekParent.id,kind:'Block',refId:peNestedDaily.id}).state;
+peMidweek=issue(peMidweek,'ACTIVATE','2026-01-05T08:00:00Z',{blockId:peMidweekParent.id,schedule:{period:'weekly'}}).state;
+peMidweek=issue(peMidweek,'ACTIVATE','2026-01-07T08:00:00Z',{blockId:peNestedDaily.id,schedule:{period:'daily'}}).state;
+for(const day of ['07','08','09','10','11']){peMidweek=reconcile(peMidweek,at(`2026-01-${day}T12:00:00Z`));peMidweek=issue(peMidweek,'LOG_ACTION',`2026-01-${day}T12:01:00Z`,{actionId:peNestedAction.id,quantity:1}).state;}
+peMidweek=reconcile(peMidweek,at('2026-01-12T00:01:00Z'));
+assert.equal(peMidweek.runs.find(r=>r.blockId===peMidweekParent.id&&r.startedAt==='2026-01-05T00:00:00.000Z').status,'COMPLETED');
+
+// Paused Targets do not manufacture missed periods or count paused activity.
+let pePausedTarget=emptyState();
+peAdd=issue(pePausedTarget,'ADD_DEFINITION','2026-01-05T08:00:00Z',{kind:'actions',data:{name:'Target action',completion:{type:'quantity',target:1}}});pePausedTarget=peAdd.state;const peTargetAction=peAdd.value;
+peAdd=issue(pePausedTarget,'ADD_DEFINITION','2026-01-05T08:00:00Z',{kind:'blocks',data:{name:'Paused target',type:'target',config:{period:'daily',metric:'count',target:1}}});pePausedTarget=peAdd.state;const peTarget=peAdd.value;
+pePausedTarget=issue(pePausedTarget,'ADD_RELATIONSHIP','2026-01-05T08:00:00Z',{blockId:peTarget.id,kind:'Action',refId:peTargetAction.id}).state;
+pePausedTarget=issue(pePausedTarget,'ACTIVATE','2026-01-05T08:00:00Z',{blockId:peTarget.id}).state;
+pePausedTarget=issue(pePausedTarget,'PAUSE_BLOCK','2026-01-05T12:00:00Z',{blockId:peTarget.id,resumeAt:'2026-01-07T12:00:00Z'}).state;
+pePausedTarget=issue(pePausedTarget,'LOG_ACTION','2026-01-07T08:00:00Z',{actionId:peTargetAction.id,quantity:1}).state;
+pePausedTarget=reconcile(pePausedTarget,at('2026-01-07T12:01:00Z'));
+assert.equal(pePausedTarget.periods.filter(p=>p.blockId===peTarget.id&&p.status==='MISSED').length,0);
+let peResumedPeriod=pePausedTarget.periods.filter(p=>p.blockId===peTarget.id&&p.status==='OPEN').at(-1);
+assert.equal(peResumedPeriod.actual,0,'logs during Target pause are excluded');
+pePausedTarget=issue(pePausedTarget,'LOG_ACTION','2026-01-07T13:00:00Z',{actionId:peTargetAction.id,quantity:1}).state;
+peResumedPeriod=pePausedTarget.periods.filter(p=>p.blockId===peTarget.id&&p.status==='OPEN').at(-1);
+assert.equal(peResumedPeriod.actual,1);
+
+// MISSED logs are factual history, not successful Target progress.
+let peMissedTarget=emptyState();
+peAdd=issue(peMissedTarget,'ADD_DEFINITION','2026-01-05T08:00:00Z',{kind:'actions',data:{name:'Missable',completion:{type:'quantity',target:1}}});peMissedTarget=peAdd.state;const peMissable=peAdd.value;
+peAdd=issue(peMissedTarget,'ADD_DEFINITION','2026-01-05T08:00:00Z',{kind:'blocks',data:{name:'Count only success',type:'target',config:{period:'daily',metric:'count',target:1}}});peMissedTarget=peAdd.state;const peSuccessTarget=peAdd.value;
+peMissedTarget=issue(peMissedTarget,'ADD_RELATIONSHIP','2026-01-05T08:00:00Z',{blockId:peSuccessTarget.id,kind:'Action',refId:peMissable.id}).state;
+peMissedTarget=issue(peMissedTarget,'ACTIVATE','2026-01-05T08:00:00Z',{blockId:peSuccessTarget.id}).state;
+peMissedTarget=issue(peMissedTarget,'LOG_ACTION','2026-01-05T09:00:00Z',{actionId:peMissable.id,outcome:'MISSED',quantity:0}).state;
+assert.equal(peMissedTarget.periods.find(p=>p.blockId===peSuccessTarget.id&&p.status==='OPEN').actual,0);
+
+// Same-day pause/resume must not duplicate a calendar Run.
+let peSameDay=emptyState();
+peAdd=issue(peSameDay,'ADD_DEFINITION','2026-01-05T08:00:00Z',{kind:'blocks',data:{name:'Same-day pause',type:'routine',config:{period:'daily'}}});peSameDay=peAdd.state;const peSameRoutine=peAdd.value;
+peSameDay=issue(peSameDay,'ACTIVATE','2026-01-05T08:00:00Z',{blockId:peSameRoutine.id,schedule:{period:'daily'}}).state;
+peSameDay=issue(peSameDay,'PAUSE_BLOCK','2026-01-05T10:00:00Z',{blockId:peSameRoutine.id,resumeAt:'2026-01-05T12:00:00Z'}).state;
+peSameDay=reconcile(peSameDay,at('2026-01-05T12:01:00Z'));
+assert.equal(peSameDay.runs.filter(r=>r.blockId===peSameRoutine.id&&r.status==='IN_PROGRESS').length,1);
+assert.equal(peSameDay.runs.filter(r=>r.blockId===peSameRoutine.id).length,1);
+
+console.log('PASS: snapshots, DST rollover, blank deadlines, archive safety, timezone rescheduling, midweek nested routines, missed logs, paused Targets, same-day resume, Action/Todo distinction, shared contexts, Results, cycles, alarms, Avoid, Workflow, Project conditions/scope/deadlines/dependencies, Target, pause/resume and data safety');
