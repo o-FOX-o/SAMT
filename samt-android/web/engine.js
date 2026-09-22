@@ -344,15 +344,26 @@ function finishRun(s,run,at,manualSuccess=false) {
       child.actual=actual;child.status=actual<=limit?'DONE':'MISSED';child.resolvedAt=iso(at);
     }
     if(child.kind==='Block'&&child.definitionSnapshot?.type==='routine'&&child.status==='OPEN') {
-      const cadence=child.definitionSnapshot.config?.period||'daily';
-      const nested=s.runs.filter(r=>r.blockId===child.refId&&r.startedAt>=run.startedAt&&r.startedAt<end);
-      const expected=cadence==='daily'?Math.round((Date.parse(localKey(end,s.settings.timezone)+'T12:00:00Z')-Date.parse(localKey(run.startedAt,s.settings.timezone)+'T12:00:00Z'))/86400000):1;
-      if(nested.length>=Math.max(1,expected)&&nested.every(r=>r.status==='COMPLETED')){child.status='DONE';child.resolvedAt=iso(at);}
+      const cadence=child.definitionSnapshot.config?.period||'daily',activation=s.activations.find(a=>a.blockId===child.refId);
+      const effectiveStart=activation?.startedAt&&activation.startedAt>run.startedAt?activation.startedAt:run.startedAt;
+      const nestedStart=periodBounds(cadence,effectiveStart,s.settings).start;
+      const nested=s.runs.filter(r=>r.blockId===child.refId&&r.startedAt>=nestedStart&&r.startedAt<end);
+      const expected=cadence==='daily'?Math.max(0,Math.round((Date.parse(localKey(end,s.settings.timezone)+'T12:00:00Z')-Date.parse(localKey(effectiveStart,s.settings.timezone)+'T12:00:00Z'))/86400000)):1;
+      if(expected===0||nested.length>=expected&&nested.slice(-expected).every(r=>r.status==='COMPLETED')){child.status='DONE';child.resolvedAt=iso(at);}
     }
+  }
+  for(const child of run.children)if(['OPEN','LOCKED','BLOCKED'].includes(child.status)) {
+    child.status=child.required?'MISSED':'SKIPPED';child.resolvedAt=iso(at);
   }
   const progress=runProgress(run,s,at);run.completionPercentage=progress.percentage;if(run.type==='project')run.conditionResults=copy(progress.conditionResults||[]);
   run.status=manualSuccess||progress.satisfied?'COMPLETED':'MISSED';
   run.finishedAt=iso(at);record(s,`run_${run.status.toLowerCase()}`,{runId:run.id,blockId:run.blockId,completed:progress.done,required:progress.required},at);
+}
+function cancelRun(s,run,at,reason='cancelled') {
+  if(!run||['COMPLETED','MISSED','CANCELLED','EXPIRED'].includes(run.status))return;
+  for(const child of run.children||[])if(['OPEN','LOCKED','BLOCKED'].includes(child.status)) {child.status='SKIPPED';child.resolvedAt=iso(at);}
+  run.status='CANCELLED';run.finishedAt=iso(at);run.cancelReason=reason;
+  record(s,'run_cancelled',{runId:run.id,blockId:run.blockId,reason},at);
 }
 function advanceWorkflow(run,child,at) {
   if(run.type!=='workflow'||child.status!=='DONE')return;
@@ -401,6 +412,14 @@ function eligibleEntry(e,at) {
   if(e.activeFrom&&time<e.activeFrom||e.activeUntil&&time>=e.activeUntil)return false;
   return !(e.offPeriods||[]).some(p=>time>=p.start&&(!p.end||time<p.end)&&!p.notifiedAt);
 }
+function supersedeFutureOccurrences(s,predicate,at,reason='schedule_changed') {
+  const when=iso(at);let count=0;
+  for(const occurrence of s.occurrences)if(occurrence.status==='OPEN'&&occurrence.dueAt>when&&predicate(occurrence)) {
+    occurrence.status='SUPERSEDED';occurrence.resolvedAt=when;occurrence.cancelReason=reason;count++;
+  }
+  if(count)record(s,'future_occurrences_superseded',{count,reason},at);
+  return count;
+}
 function dueForDay(entry,key,settings) {
   const schedule=entry.schedule||{},mode=schedule.mode||'manual',zone=settings.timezone||'Europe/London';
   if(mode==='manual')return null;
@@ -423,13 +442,13 @@ function makeOccurrence(s,block,entry,due,at) {
   const target=entry.kind==='Action'?byId(s,'actions',entry.refId):null;
   const o={id:id('occurrence'),blockId:block.id,entryId:entry.id,entrySnapshot:copy(entry),
     itemSnapshot:target?copy(target):{name:entry.name},dueAt:due,
-    deadlineAt:entry.deadlineMinutes!=null?iso(Date.parse(due)+Number(entry.deadlineMinutes)*60000):due,
+    deadlineAt:entry.deadlineMinutes!=null?iso(Date.parse(due)+Number(entry.deadlineMinutes)*60000):null,
     status:'OPEN',createdAt:iso(at),resolvedAt:null,snoozedUntil:null,actionLogId:null};
   s.occurrences.push(o);record(s,'occurrence_created',{occurrenceId:o.id,entryId:entry.id},at);
   updateOccurrenceStatus(s,at);return o;
 }
 function updateOccurrenceStatus(s,at) {
-  for(const o of s.occurrences.filter(x=>x.status==='OPEN'&&x.deadlineAt<iso(at))) {
+  for(const o of s.occurrences.filter(x=>x.status==='OPEN'&&x.deadlineAt&&x.deadlineAt<iso(at))) {
     const policy=o.entrySnapshot?.unfinished||'stay_overdue';
     if(policy==='expire') {o.status='MISSED';o.resolvedAt=o.deadlineAt;record(s,'occurrence_missed',{occurrenceId:o.id},at);}
     else o.status=policy==='carry_forward'?'CARRIED':'OVERDUE';
@@ -441,8 +460,12 @@ function reconcileOccurrences(s,at,horizonDays=14) {
   for(const block of s.blocks.filter(b=>b.type==='action_list'&&b.status!=='ARCHIVED'&&s.activations.some(a=>a.blockId===b.id&&a.status==='ACTIVE'))) {
     const activation=s.activations.find(a=>a.blockId===block.id&&a.status==='ACTIVE');
     for(const entry of block.entries||[]) {
+      if(entry.kind==='Action') {
+        const action=byId(s,'actions',entry.refId);
+        if(!action||action.status==='ARCHIVED')continue;
+      }
       const earliest=[entry.activeFrom,entry.createdAt,activation?.startedAt,s.meta?.occurrenceFloorAt].filter(Boolean).map(x=>localKey(x,zone)).sort().at(-1)||today;
-      const last=s.occurrences.filter(o=>o.entryId===entry.id).sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).at(-1);
+      const last=s.occurrences.filter(o=>o.entryId===entry.id&&o.status!=='SUPERSEDED').sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).at(-1);
       const from=last?dayShift(localKey(last.dueAt,zone),-1):earliest;
       const minDay=dayShift(today,-739);
       const start=from>minDay?from:minDay;
@@ -451,7 +474,7 @@ function reconcileOccurrences(s,at,horizonDays=14) {
         const key=dayShift(start,d);if(key<earliest)continue;
         const due=dueForDay(entry,key,s.settings);if(!due||!eligibleEntry(entry,due))continue;
         if(entry.repeatEnd&&due>=entry.repeatEnd)continue;
-        if(s.occurrences.some(o=>o.entryId===entry.id&&o.dueAt===due))continue;
+        if(s.occurrences.some(o=>o.entryId===entry.id&&o.dueAt===due&&o.status!=='SUPERSEDED'))continue;
         if(entry.overlap==='block_next'&&s.occurrences.some(o=>o.entryId===entry.id&&['OPEN','OVERDUE','CARRIED'].includes(o.status)&&o.dueAt<due))continue;
         makeOccurrence(s,block,entry,due,at);
       }
@@ -463,7 +486,9 @@ function targetActual(s,block,bounds) {
   const actionIds=new Set((block.relationships||[]).filter(r=>r.kind==='Action').map(r=>r.refId));
   function descendants(ref,seen=new Set()) {if(seen.has(ref))return;seen.add(ref);const b=byId(s,'blocks',ref);for(const r of b?.relationships||[]){if(r.kind==='Action')actionIds.add(r.refId);else descendants(r.refId,seen);}}
   for(const r of block.relationships||[])if(r.kind==='Block')descendants(r.refId);
-  const logs=s.actionLogs.filter(l=>l.at>=bounds.start&&l.at<bounds.end&&actionIds.has(l.actionId)&&!logIds.has(l.id)&&logIds.add(l.id));
+  const excluded=bounds.excludedIntervals||[];
+  const logs=s.actionLogs.filter(l=>l.outcome!=='MISSED'&&l.at>=bounds.start&&l.at<bounds.end&&
+    !excluded.some(x=>l.at>=x.start&&l.at<x.end)&&actionIds.has(l.actionId)&&!logIds.has(l.id)&&logIds.add(l.id));
   const kind=block.config?.metric||'count';
   if(kind==='minutes')return logs.reduce((n,l)=>n+(l.durationMinutes||0),0);
   if(kind==='quantity')return logs.reduce((n,l)=>n+(l.quantity||0),0);
@@ -475,12 +500,12 @@ function reconcilePeriods(s,at) {
     const cadence=block.config?.period||'daily';let p=s.periods.filter(p=>p.blockId===block.id).sort((a,b)=>a.start.localeCompare(b.start)).at(-1);
     if(!p) {const b=periodBounds(cadence,at,s.settings);p={id:id('period'),blockId:block.id,blockSnapshot:copy(block),start:b.start,end:b.end,status:'OPEN',actual:0,target:Number(block.config?.target)||0};s.periods.push(p);}
     let guard=0;while(p.end<=iso(at)&&guard++<740) {
-      p.actual=targetActual(s,p.blockSnapshot,{start:p.start,end:p.end});p.status=p.actual>=p.target?'REACHED':'MISSED';p.closedAt=p.end;
+      p.actual=targetActual(s,p.blockSnapshot,{start:p.start,end:p.end,excludedIntervals:p.excludedIntervals||[]});p.status=p.actual>=p.target?'REACHED':'MISSED';p.closedAt=p.end;
       record(s,'period_closed',{periodId:p.id,blockId:p.blockId,actual:p.actual,target:p.target},p.end);
       const b=periodBounds(cadence,new Date(p.end).getTime()+1000,s.settings);
       p={id:id('period'),blockId:block.id,blockSnapshot:copy(block),start:b.start,end:b.end,status:'OPEN',actual:0,target:Number(block.config?.target)||0};s.periods.push(p);
     }
-    p.actual=targetActual(s,p.blockSnapshot,{start:p.start,end:iso(at)});
+    p.actual=targetActual(s,p.blockSnapshot,{start:p.start,end:iso(Date.parse(iso(at))+1),excludedIntervals:p.excludedIntervals||[]});
   }
 }
 function avoidValue(s,action,start,end) {
@@ -539,6 +564,21 @@ function resumeActivation(s,activation,at) {
       for(const child of run.children){if(child.availableAt)child.availableAt=iso(Date.parse(child.availableAt)+duration);if(child.dueAt)child.dueAt=iso(Date.parse(child.dueAt)+duration);if(child.snoozedUntil)child.snoozedUntil=iso(Date.parse(child.snoozedUntil)+duration);}
     }
     run.transitions.push({id:id('transition'),event:'RUN_RESUMED',at:resumeAt,pauseDurationMinutes:duration/60000});
+  }
+  if(block?.type==='target') {
+    const period=s.periods.filter(p=>p.blockId===block.id).sort((a,b)=>a.start.localeCompare(b.start)).at(-1);
+    if(period?.status==='OPEN') {
+      if(period.end<=resumeAt) {
+        period.actual=targetActual(s,period.blockSnapshot,{start:period.start,end:pausedAt,excludedIntervals:period.excludedIntervals||[]});
+        period.status='PAUSED';period.closedAt=pausedAt;period.pausedAt=pausedAt;
+        record(s,'period_paused',{periodId:period.id,blockId:block.id,actual:period.actual},pausedAt);
+        const bounds=periodBounds(block.config?.period||'daily',resumeAt,s.settings);
+        s.periods.push({id:id('period'),blockId:block.id,blockSnapshot:copy(block),start:bounds.start,end:bounds.end,status:'OPEN',actual:0,target:Number(block.config?.target)||0,
+          excludedIntervals:bounds.start<resumeAt?[{start:bounds.start,end:resumeAt}]:[]});
+      } else if(pausedAt<resumeAt) {
+        period.excludedIntervals=period.excludedIntervals||[];period.excludedIntervals.push({start:pausedAt,end:resumeAt});
+      }
+    }
   }
   activation.status='ACTIVE';activation.resumedAt=resumeAt;activation.totalPausedMinutes=(activation.totalPausedMinutes||0)+duration/60000;
   activation.pausedAt=null;activation.resumeAt=null;
@@ -895,7 +935,11 @@ export function execute(input,command,at) {
       record(s,'cycle_resolved',{blockId:cycle.blockId,outcome:command.outcome,position:cycle.index},at);value=cycle;break;
     }
     case 'ADD_REVIEW':value={id:id('review'),at:iso(at),period:command.period||'week',notes:String(command.notes||''),highlights:String(command.highlights||''),next:String(command.next||'')};s.reviews.push(value);record(s,'review_saved',{reviewId:value.id},at);break;
-    case 'SET_SETTINGS':s.settings={...s.settings,...copy(command.changes)};record(s,'settings_changed',{keys:Object.keys(command.changes)},at);break;
+    case 'SET_SETTINGS':{
+      const previousZone=s.settings.timezone,changes=copy(command.changes);
+      if(changes.timezone&&changes.timezone!==previousZone)supersedeFutureOccurrences(s,()=>true,at,'timezone_changed');
+      s.settings={...s.settings,...changes};record(s,'settings_changed',{keys:Object.keys(changes)},at);break;
+    }
     case 'CLEAR_DATA':{
       const options={categories:copy(command.categories||[]),dateMode:command.dateMode||'all',cutoff:command.cutoff?iso(command.cutoff):null};
       const impact=dataClearImpact(s,options);insist(impact.total>0,'No matching data to clear.');addRestorePoint(s,'before clearing selected data',at);
@@ -924,7 +968,12 @@ export function execute(input,command,at) {
       const d=byId(s,command.kind,command.id);insist(d,'Definition not found.');d.status='ARCHIVED';d.updatedAt=iso(at);
       if(command.kind==='blocks'){
         const a=s.activations.find(x=>x.blockId===d.id&&x.status==='ACTIVE');if(a)a.status='INACTIVE';
-        for(const run of s.runs.filter(x=>x.blockId===d.id&&x.status==='IN_PROGRESS'))finishRun(s,run,at);
+        for(const run of s.runs.filter(x=>x.blockId===d.id&&(isWorkingRun(x)||['PAUSED','BLOCKED'].includes(x.status))))cancelRun(s,run,at,'definition_archived');
+        if(d.type==='action_list')supersedeFutureOccurrences(s,o=>o.blockId===d.id,at,'block_archived');
+      }
+      if(command.kind==='actions') {
+        const entryIds=new Set(s.blocks.flatMap(b=>(b.entries||[]).filter(e=>e.kind==='Action'&&e.refId===d.id).map(e=>e.id)));
+        supersedeFutureOccurrences(s,o=>entryIds.has(o.entryId),at,'action_archived');
       }
       record(s,'definition_archived',{kind:command.kind,definitionId:d.id},at);value=d;break;
     }
@@ -940,7 +989,12 @@ export function execute(input,command,at) {
         d.status=archived?'ARCHIVED':'ACTIVE';d.updatedAt=iso(at);
         if(archived&&kind==='blocks') {
           const activation=s.activations.find(x=>x.blockId===d.id&&x.status==='ACTIVE');if(activation)activation.status='INACTIVE';
-          for(const run of s.runs.filter(x=>x.blockId===d.id&&x.status==='IN_PROGRESS'))finishRun(s,run,at);
+          for(const run of s.runs.filter(x=>x.blockId===d.id&&(isWorkingRun(x)||['PAUSED','BLOCKED'].includes(x.status))))cancelRun(s,run,at,'definition_archived');
+          if(d.type==='action_list')supersedeFutureOccurrences(s,o=>o.blockId===d.id,at,'block_archived');
+        }
+        if(archived&&kind==='actions') {
+          const entryIds=new Set(s.blocks.flatMap(b=>(b.entries||[]).filter(e=>e.kind==='Action'&&e.refId===d.id).map(e=>e.id)));
+          supersedeFutureOccurrences(s,o=>entryIds.has(o.entryId),at,'action_archived');
         }
         record(s,archived?'definition_archived':'definition_unarchived',{kind,definitionId:d.id},at);
       }
