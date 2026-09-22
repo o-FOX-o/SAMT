@@ -317,7 +317,7 @@ function runProgress(run,s=null,at=Date.now()) {
   else threshold=requiredDone;
   return {done,total:children.length,required:required.length,requiredDone,percentage:children.length?Math.min(100,done/children.length*100):100,satisfied:requiredDone&&threshold,mode};
 }
-function maybeFinishRunfunction maybeFinishRun(s,run,at) {
+function maybeFinishRun(s,run,at) {
   if(!isWorkingRun(run))return;
   if(run.type==='project')refreshProjectChildren(run,at);
   const progress=runProgress(run,s,at),config=run.blockSnapshot?.config||{},policy=config.afterMinimum||'auto_finish';
