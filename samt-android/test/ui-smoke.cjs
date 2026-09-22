@@ -60,6 +60,10 @@ async function connect(){
   await until(`JSON.parse(localStorage.getItem('samt.android.v3')).actionLogs.length === 1`);
   const logged=await evaluate(`JSON.parse(localStorage.getItem('samt.android.v3'))`);
   assert.equal(logged.runs.find(r=>r.blockSnapshot.name==='Daily prayer').children.find(c=>c.definitionSnapshot.name==='Dhuhr').status,'DONE');
+  await evaluate(`[...document.querySelectorAll('.card .row')].find(x=>x.querySelector('strong')?.textContent==='Dhuhr').querySelector('[data-action=edit-child]').click()`);
+  await until(`document.querySelector('.modal h2')?.textContent === 'Edit linked child'`);
+  await evaluate(`document.querySelector('[name=time]').value='13:00';document.querySelector('[name=alarm]').checked=true;document.querySelector('#editor').requestSubmit()`);
+  await until(`JSON.parse(localStorage.getItem('samt.android.v3')).blocks.find(b=>b.name==='Daily prayer').relationships.find(r=>JSON.parse(localStorage.getItem('samt.android.v3')).actions.find(a=>a.id===r.refId)?.name==='Dhuhr').config.alarm === true`);
 
   await evaluate(`document.querySelector('.top [data-action=quick-log]').click()`);
   await until(`document.querySelector('h1')?.textContent === 'Quick log'`);

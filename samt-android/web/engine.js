@@ -148,10 +148,20 @@ function resultValue(field,raw,s) {
   }
   return String(raw);
 }
-function createRun(s,block,at,bounds=null) {
+function relationshipDue(rel,bounds,at,s,cadence) {
+  const config=rel.config||{};if(!config.time)return null;
+  let key=localKey(bounds?.start||at,s.settings.timezone),dueKey=key;
+  if(cadence==='weekly'&&config.weekday!==null&&config.weekday!==undefined&&config.weekday!=='') {
+    const current=new Date(`${key}T12:00:00Z`).getUTCDay(),wanted=Number(config.weekday);
+    dueKey=dayShift(key,(wanted-current+7)%7);
+  }
+  return zoned(dueKey,config.time,s.settings.timezone);
+}
+function createRun(s,block,at,bounds=null,cadence=block.config?.period||'manual') {
   const r={id:id('run'),blockId:block.id,type:block.type,startedAt:bounds?.start||iso(at),deadlineAt:bounds?.end||null,
     status:'IN_PROGRESS',blockSnapshot:copy(block),children:(block.relationships||[]).map(rel=>({id:id('child'),relationshipId:rel.id,
-      kind:rel.kind,refId:rel.refId,required:rel.required!==false,status:'OPEN',definitionSnapshot:copy(byId(s,rel.kind==='Action'?'actions':'blocks',rel.refId))})),
+      kind:rel.kind,refId:rel.refId,required:rel.required!==false,status:'OPEN',config:copy(rel.config||{}),dueAt:relationshipDue(rel,bounds,at,s,cadence),snoozedUntil:null,
+      definitionSnapshot:copy(byId(s,rel.kind==='Action'?'actions':'blocks',rel.refId))})),
     transitions:[],finishedAt:null,activationId:s.activations.find(x=>x.blockId===block.id)?.id||null};
   if(block.type==='workflow')r.children.forEach((child,index)=>{if(index)child.status='LOCKED';});
   s.runs.push(r);record(s,'run_started',{runId:r.id,blockId:block.id},at);return r;
@@ -213,13 +223,13 @@ function reconcileRoutines(s,at) {
     if(!['daily','weekly'].includes(cadence))continue;
     const current=periodBounds(cadence,at,s.settings),start=activation.startedAt||iso(at);
     let last=s.runs.filter(r=>r.activationId===activation.id).sort((a,b)=>a.startedAt.localeCompare(b.startedAt)).at(-1);
-    if(!last) {const begin=periodBounds(cadence,start,s.settings);last=createRun(s,block,at,begin);}
+    if(!last) {const begin=periodBounds(cadence,start,s.settings);last=createRun(s,block,at,begin,cadence);}
     let guard=0;
     while(last.deadlineAt&&last.deadlineAt<=iso(at)&&guard++<740) {
       finishRun(s,last,last.deadlineAt);
       const next=periodBounds(cadence,new Date(last.deadlineAt).getTime()+1000,s.settings);
       if(next.start>=current.end)break;
-      last=createRun(s,block,new Date(next.start).getTime(),next);
+      last=createRun(s,block,new Date(next.start).getTime(),next,cadence);
     }
   }
 }
@@ -363,14 +373,14 @@ function resumeActivation(s,activation,at) {
     run.status='IN_PROGRESS';run.resumedAt=resumeAt;
     if(!['daily','weekly'].includes(cadence)) {
       if(run.deadlineAt)run.deadlineAt=iso(Date.parse(run.deadlineAt)+duration);
-      for(const child of run.children)if(child.availableAt)child.availableAt=iso(Date.parse(child.availableAt)+duration);
+      for(const child of run.children){if(child.availableAt)child.availableAt=iso(Date.parse(child.availableAt)+duration);if(child.dueAt)child.dueAt=iso(Date.parse(child.dueAt)+duration);if(child.snoozedUntil)child.snoozedUntil=iso(Date.parse(child.snoozedUntil)+duration);}
     }
     run.transitions.push({id:id('transition'),event:'RUN_RESUMED',at:resumeAt,pauseDurationMinutes:duration/60000});
   }
   activation.status='ACTIVE';activation.resumedAt=resumeAt;activation.totalPausedMinutes=(activation.totalPausedMinutes||0)+duration/60000;
   activation.pausedAt=null;activation.resumeAt=null;
   if(block?.type==='routine'&&['daily','weekly'].includes(cadence)&&!s.runs.some(r=>r.activationId===activation.id&&r.status==='IN_PROGRESS')) {
-    const bounds=periodBounds(cadence,resumeAt,s.settings);createRun(s,block,resumeAt,bounds);
+    const bounds=periodBounds(cadence,resumeAt,s.settings);createRun(s,block,resumeAt,bounds,cadence);
   }
   record(s,'block_resumed',{blockId:activation.blockId,activationId:activation.id},resumeAt);
 }
@@ -545,6 +555,15 @@ export function execute(input,command,at) {
       const b=byId(s,'blocks',command.blockId);insist(b,'Block not found.');
       const r={id:id('relation'),kind:command.kind,refId:command.refId,required:command.required!==false,weight:command.weight||1,config:copy(command.config||{})};
       b.relationships.push(r);b.updatedAt=iso(at);record(s,'relationship_added',{blockId:b.id,relationshipId:r.id},at);value=r;break;
+    }
+    case 'EDIT_RELATIONSHIP':{
+      const b=byId(s,'blocks',command.blockId),r=b?.relationships?.find(x=>x.id===command.relationshipId);insist(r,'Relationship not found.');
+      Object.assign(r,{required:command.required!==false,weight:Math.max(1,Number(command.weight)||1),config:copy(command.config||{})});
+      b.updatedAt=iso(at);record(s,'relationship_edited',{blockId:b.id,relationshipId:r.id},at);value=r;break;
+    }
+    case 'REMOVE_RELATIONSHIP':{
+      const b=byId(s,'blocks',command.blockId),r=b?.relationships?.find(x=>x.id===command.relationshipId);insist(r,'Relationship not found.');
+      b.relationships=b.relationships.filter(x=>x.id!==r.id);b.updatedAt=iso(at);record(s,'relationship_removed',{blockId:b.id,relationshipId:r.id},at);value=r;break;
     }
     case 'ADD_ENTRY':{
       const b=byId(s,'blocks',command.blockId);insist(b?.type==='action_list','Action List not found.');
@@ -775,6 +794,16 @@ export function alarmRequests(s,at) {
     }
     const alarmTime=o.snoozedUntil?Date.parse(o.snoozedUntil):Date.parse(o.dueAt);
     if(e.alarm&&alarmTime>current)items.push({id:`${o.id}:alarm`,at:alarmTime,title,body:'Your SAMT alarm is due',kind:'alarm'});
+  }
+  for(const run of s.runs.filter(x=>x.status==='IN_PROGRESS'))for(const child of run.children||[]) {
+    if(child.status!=='OPEN'||!child.dueAt)continue;
+    const config=child.config||{},title=child.definitionSnapshot?.name||'SAMT reminder',due=Date.parse(child.dueAt);
+    for(const minutes of config.reminderMinutes||[]) {
+      const when=due-Number(minutes)*60000;
+      if(when>current)items.push({id:`${child.id}:${minutes}`,at:when,title,body:`Upcoming in ${run.blockSnapshot?.name||'SAMT'}`,kind:'reminder'});
+    }
+    const alarmTime=child.snoozedUntil?Date.parse(child.snoozedUntil):due;
+    if(config.alarm&&alarmTime>current)items.push({id:`${child.id}:alarm`,at:alarmTime,title,body:`Due in ${run.blockSnapshot?.name||'SAMT'}`,kind:'alarm'});
   }
   return items.sort((a,b)=>a.at-b.at).slice(0,250);
 }

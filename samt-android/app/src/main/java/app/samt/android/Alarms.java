@@ -53,8 +53,8 @@ public final class Alarms {
     }
     public static void replaceFromState(Context context,JSONObject state) throws Exception {
         long now=System.currentTimeMillis();List<JSONObject> requests=new ArrayList<>();
-        JSONArray occurrences=state.optJSONArray("occurrences");if(occurrences==null)return;
-        for(int i=0;i<occurrences.length();i++) {
+        JSONArray occurrences=state.optJSONArray("occurrences");
+        if(occurrences!=null)for(int i=0;i<occurrences.length();i++) {
             JSONObject o=occurrences.getJSONObject(i);String status=o.optString("status");
             if(!"OPEN".equals(status)&&!"OVERDUE".equals(status)&&!"CARRIED".equals(status))continue;
             JSONObject e=o.optJSONObject("entrySnapshot"),item=o.optJSONObject("itemSnapshot");if(e==null)continue;
@@ -68,6 +68,25 @@ public final class Alarms {
             long alarm=o.isNull("snoozedUntil")?due:androidTime(o.optString("snoozedUntil"));
             if(e.optBoolean("alarm")&&alarm>now)requests.add(new JSONObject().put("id",o.getString("id")+":alarm")
                 .put("at",alarm).put("title",title).put("body","Your SAMT alarm is due").put("kind","alarm"));
+        }
+        JSONArray runs=state.optJSONArray("runs");
+        if(runs!=null)for(int i=0;i<runs.length();i++) {
+            JSONObject run=runs.getJSONObject(i);if(!"IN_PROGRESS".equals(run.optString("status")))continue;
+            JSONArray children=run.optJSONArray("children");if(children==null)continue;
+            for(int j=0;j<children.length();j++) {
+                JSONObject child=children.getJSONObject(j),config=child.optJSONObject("config"),snapshot=child.optJSONObject("definitionSnapshot");
+                if(!"OPEN".equals(child.optString("status"))||config==null||child.isNull("dueAt"))continue;
+                long due=androidTime(child.optString("dueAt"));String title=snapshot==null?"SAMT reminder":snapshot.optString("name","SAMT reminder");
+                JSONArray minutes=config.optJSONArray("reminderMinutes");
+                if(minutes!=null)for(int k=0;k<minutes.length();k++) {
+                    long when=due-(long)(minutes.optDouble(k,0)*60000);
+                    if(when>now)requests.add(new JSONObject().put("id",child.getString("id")+":"+minutes.optString(k))
+                        .put("at",when).put("title",title).put("body","Upcoming in "+run.optJSONObject("blockSnapshot").optString("name","SAMT")).put("kind","reminder"));
+                }
+                long alarm=child.isNull("snoozedUntil")?due:androidTime(child.optString("snoozedUntil"));
+                if(config.optBoolean("alarm")&&alarm>now)requests.add(new JSONObject().put("id",child.getString("id")+":alarm")
+                    .put("at",alarm).put("title",title).put("body","Due in "+run.optJSONObject("blockSnapshot").optString("name","SAMT")).put("kind","alarm"));
+            }
         }
         requests.sort(Comparator.comparingLong(x->x.optLong("at")));
         JSONArray next=new JSONArray();for(int i=0;i<Math.min(250,requests.size());i++)next.put(requests.get(i));
@@ -93,16 +112,21 @@ public final class Alarms {
                     String id=intent.getStringExtra("id");if(id==null)return;
                     String occurrenceId=id.split(":",2)[0];
                     String raw=context.getSharedPreferences("samt",Context.MODE_PRIVATE).getString("state","");
-                    JSONObject state=new JSONObject(raw),o=null;JSONArray items=state.getJSONArray("occurrences");
+                    JSONObject state=new JSONObject(raw),o=null,child=null,ownerRun=null;JSONArray items=state.getJSONArray("occurrences");
                     for(int i=0;i<items.length();i++)if(occurrenceId.equals(items.getJSONObject(i).optString("id")))o=items.getJSONObject(i);
-                    if(o==null)return;
-                    String status=o.optString("status");
+                    if(o==null){JSONArray runs=state.optJSONArray("runs");if(runs!=null)for(int i=0;i<runs.length();i++){
+                        JSONObject run=runs.getJSONObject(i);JSONArray children=run.optJSONArray("children");if(children==null)continue;
+                        for(int j=0;j<children.length();j++)if(occurrenceId.equals(children.getJSONObject(j).optString("id"))){child=children.getJSONObject(j);ownerRun=run;}
+                    }}
+                    JSONObject target=o!=null?o:child;if(target==null)return;
+                    String status=target.optString("status");
                     if(!"OPEN".equals(status)&&!"OVERDUE".equals(status)&&!"CARRIED".equals(status))return;
                     long now=System.currentTimeMillis(),until=now+600000;
-                    o.put("snoozedUntil",java.time.Instant.ofEpochMilli(until).toString());
-                    state.getJSONArray("history").put(new JSONObject().put("id","history_"+UUID.randomUUID())
-                        .put("event","occurrence_snoozed").put("at",java.time.Instant.ofEpochMilli(now).toString())
-                        .put("occurrenceId",occurrenceId).put("until",java.time.Instant.ofEpochMilli(until).toString()));
+                    target.put("snoozedUntil",java.time.Instant.ofEpochMilli(until).toString());
+                    JSONObject event=new JSONObject().put("id","history_"+UUID.randomUUID())
+                        .put("event",o!=null?"occurrence_snoozed":"run_child_snoozed").put("at",java.time.Instant.ofEpochMilli(now).toString())
+                        .put(o!=null?"occurrenceId":"childId",occurrenceId).put("until",java.time.Instant.ofEpochMilli(until).toString());
+                    if(ownerRun!=null)event.put("runId",ownerRun.optString("id"));state.getJSONArray("history").put(event);
                     state.getJSONObject("meta").put("updatedAt",java.time.Instant.ofEpochMilli(now).toString());
                     if(context.getSharedPreferences("samt",Context.MODE_PRIVATE).edit().putString("state",state.toString()).commit())
                         replaceFromState(context,state);

@@ -9,10 +9,13 @@ let result=issue(state,'ADD_DEFINITION',t0,{kind:'categories',data:{name:'Health
 result=issue(state,'ADD_DEFINITION',t0,{kind:'tags',data:{name:'Exercise',categoryId:result.value.id}});state=result.state;const tag=result.value;
 result=issue(state,'ADD_DEFINITION',t0,{kind:'actions',data:{name:'Train',tagIds:[tag.id],completion:{type:'time',minimumMinutes:30},resultFields:[{id:'effort',type:'score',label:'Effort',minimum:0,maximum:10,required:true}]}});state=result.state;const action=result.value;
 result=issue(state,'ADD_DEFINITION',t0,{kind:'blocks',data:{name:'Daily Health',type:'routine',config:{period:'daily'}}});state=result.state;const routine=result.value;
-result=issue(state,'ADD_RELATIONSHIP',t0,{blockId:routine.id,kind:'Action',refId:action.id});state=result.state;
+result=issue(state,'ADD_RELATIONSHIP',t0,{blockId:routine.id,kind:'Action',refId:action.id});state=result.state;const routineRelationship=result.value;
+state=issue(state,'EDIT_RELATIONSHIP',t0,{blockId:routine.id,relationshipId:routineRelationship.id,required:true,weight:1,config:{time:'14:00',reminderMinutes:[30],alarm:true}}).state;
 result=issue(state,'ACTIVATE',t0,{blockId:routine.id,schedule:{period:'daily'}});state=result.state;
 state=reconcile(state,at(t0));const run=state.runs[0];
 assert.equal(run.deadlineAt,'2026-03-29T00:00:00.000Z');
+assert.equal(run.children[0].dueAt,'2026-03-28T14:00:00.000Z');
+assert.ok(alarmRequests(state,at(t0)).some(x=>x.id===`${run.children[0].id}:alarm`),'Routine child alarm is scheduled');
 assert.equal(periodBounds('daily',at('2026-03-29T12:00:00Z')).end,'2026-03-29T23:00:00.000Z','DST day has 23 hours');
 // Snapshot must survive definition edits.
 state=issue(state,'EDIT_DEFINITION',t0,{kind:'blocks',id:routine.id,changes:{name:'Renamed Health'}}).state;

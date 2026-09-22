@@ -69,6 +69,17 @@ public class BoundaryReceiver extends BroadcastReceiver {
     private static JSONObject find(JSONArray items,String ref) throws Exception {
         for(int i=0;i<items.length();i++){JSONObject obj=items.getJSONObject(i);if(ref.equals(obj.optString("id")))return obj;}return null;
     }
+    private static long relationshipDue(JSONObject relationship,long runStart,String period,JSONObject state) {
+        try {
+            JSONObject config=relationship.optJSONObject("config");if(config==null||config.optString("time").isEmpty())return 0;
+            ZoneId zone=zone(state);LocalDate day=Instant.ofEpochMilli(runStart).atZone(zone).toLocalDate();
+            if("weekly".equals(period)&&config.has("weekday")&&!config.isNull("weekday")) {
+                int current=day.getDayOfWeek().getValue()%7,wanted=config.getInt("weekday");
+                day=day.plusDays((wanted-current+7)%7);
+            }
+            return day.atTime(LocalTime.parse(config.getString("time"))).atZone(zone).toInstant().toEpochMilli();
+        }catch(Exception ignored){return 0;}
+    }
     private static JSONObject newRun(JSONObject block,JSONObject activation,long at,String period,JSONObject state) throws Exception {
         JSONObject run=new JSONObject().put("id",id("run")).put("blockId",block.getString("id")).put("type","routine")
             .put("startedAt",iso(at)).put("deadlineAt",iso(end(at,period,state)))
@@ -79,10 +90,13 @@ public class BoundaryReceiver extends BroadcastReceiver {
         if(rels!=null)for(int j=0;j<rels.length();j++) {
             JSONObject rel=rels.getJSONObject(j);
             JSONObject source=find(state.getJSONArray("Action".equals(rel.getString("kind"))?"actions":"blocks"),rel.getString("refId"));
-            children.put(new JSONObject().put("id",id("child")).put("relationshipId",rel.getString("id"))
+            JSONObject config=rel.optJSONObject("config");if(config==null)config=new JSONObject();
+            JSONObject child=new JSONObject().put("id",id("child")).put("relationshipId",rel.getString("id"))
                 .put("kind",rel.getString("kind")).put("refId",rel.getString("refId"))
                 .put("required",rel.optBoolean("required",true)).put("status","OPEN")
-                .put("definitionSnapshot",source==null?JSONObject.NULL:new JSONObject(source.toString())));
+                .put("config",new JSONObject(config.toString())).put("snoozedUntil",JSONObject.NULL)
+                .put("definitionSnapshot",source==null?JSONObject.NULL:new JSONObject(source.toString()));
+            long due=relationshipDue(rel,at,period,state);child.put("dueAt",due>0?iso(due):JSONObject.NULL);children.put(child);
         }
         return run.put("children",children);
     }
@@ -179,7 +193,8 @@ public class BoundaryReceiver extends BroadcastReceiver {
             JSONArray entries=b.optJSONArray("entries");if(entries==null)continue;
             for(int j=0;j<entries.length();j++) {
                 JSONObject entry=entries.getJSONObject(j);long created=time(entry.optString("createdAt")),activated=time(activation.optString("startedAt"));
-                LocalDate first=Instant.ofEpochMilli(Math.max(created,activated)).atZone(zone).toLocalDate();
+                JSONObject meta=state.optJSONObject("meta");long floor=meta==null?0:time(meta.optString("occurrenceFloorAt"));
+                LocalDate first=Instant.ofEpochMilli(Math.max(floor,Math.max(created,activated))).atZone(zone).toLocalDate();
                 long from=time(entry.optString("activeFrom"));if(from>0) {
                     LocalDate date=Instant.ofEpochMilli(from).atZone(zone).toLocalDate();if(date.isAfter(first))first=date;
                 }
@@ -230,7 +245,8 @@ public class BoundaryReceiver extends BroadcastReceiver {
                 run.put("status","IN_PROGRESS").put("resumedAt",iso(resume));hasRunning=true;
                 if(!calendar&&deadline>0)run.put("deadlineAt",iso(deadline+duration));
                 JSONArray children=run.optJSONArray("children");if(!calendar&&children!=null)for(int k=0;k<children.length();k++) {
-                    JSONObject child=children.getJSONObject(k);long available=time(child.optString("availableAt"));if(available>0)child.put("availableAt",iso(available+duration));
+                    JSONObject child=children.getJSONObject(k);long available=time(child.optString("availableAt")),due=time(child.optString("dueAt")),snoozed=time(child.optString("snoozedUntil"));
+                    if(available>0)child.put("availableAt",iso(available+duration));if(due>0)child.put("dueAt",iso(due+duration));if(snoozed>0)child.put("snoozedUntil",iso(snoozed+duration));
                 }
                 run.getJSONArray("transitions").put(new JSONObject().put("id",id("transition")).put("event","RUN_RESUMED")
                     .put("at",iso(resume)).put("pauseDurationMinutes",duration/60000d));
@@ -281,17 +297,24 @@ public class BoundaryReceiver extends BroadcastReceiver {
                 if(last==null){last=newRun(block,activation,start(now,period,state),period,state);runs.put(last);changed=true;}
                 for(int guard=0;guard<740;guard++) {
                     long deadline=time(last.optString("deadlineAt"));if(deadline<=0||deadline>now)break;
-                    int required=0,done=0;JSONArray children=last.getJSONArray("children");
+                    int required=0,requiredDone=0,completed=0;JSONArray children=last.getJSONArray("children");
                     evaluateChildren(last,state,deadline);
                     for(int j=0;j<children.length();j++) {
                         JSONObject c=children.getJSONObject(j);
-                        if(c.optBoolean("required",true)){required++;if("DONE".equals(c.optString("status")))done++;}
+                        if("DONE".equals(c.optString("status")))completed++;
+                        if(c.optBoolean("required",true)){required++;if("DONE".equals(c.optString("status")))requiredDone++;}
                     }
                     if("IN_PROGRESS".equals(last.optString("status"))) {
-                        String outcome=required==done?"COMPLETED":"MISSED";
-                        last.put("status",outcome).put("finishedAt",iso(deadline));
+                        JSONObject config=last.optJSONObject("blockSnapshot")==null?null:last.getJSONObject("blockSnapshot").optJSONObject("config");
+                        String mode=config==null?"required_only":config.optString("completionMode","required_only");boolean threshold;
+                        if("count".equals(mode))threshold=completed>=Math.max(1,config.optInt("completionValue",1));
+                        else if("percentage".equals(mode))threshold=(children.length()==0?100d:completed*100d/children.length())>=Math.max(0,config.optDouble("completionValue",0));
+                        else if("manual".equals(mode)||"open_ended".equals(mode))threshold=false;
+                        else threshold=required==requiredDone;
+                        String outcome=required==requiredDone&&threshold?"COMPLETED":"MISSED";
+                        last.put("status",outcome).put("finishedAt",iso(deadline)).put("completionPercentage",children.length()==0?100d:completed*100d/children.length());
                         history(state,"run_"+outcome.toLowerCase(),deadline,new JSONObject().put("runId",last.getString("id"))
-                            .put("blockId",block.getString("id")).put("completed",done).put("required",required));
+                            .put("blockId",block.getString("id")).put("completed",completed).put("required",required));
                     }
                     last=newRun(block,activation,deadline,period,state);runs.put(last);
                     history(state,"run_started",deadline,new JSONObject().put("runId",last.getString("id")).put("blockId",block.getString("id")));
