@@ -117,4 +117,4 @@ async function connect(){
   await capture('ui-dark.png');
   socket.close();
   console.log('PASS: mobile Today, prayer starter, active Runs, Project editor, Data Manager, backup import, and Dark mode');
-})().catch(e=>{console.error(e);process.exitCode=1;});
+})().catch(e=>{console.error(e);process.exit(1);});
