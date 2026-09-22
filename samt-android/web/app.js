@@ -31,6 +31,17 @@ function show(message,kind='good'){
   const current=toast;setTimeout(()=>{if(toast===current){toast=null;document.querySelector('.toast')?.remove();}},3600);
 }
 function navigate(to,chosen=null){route=to;detail=chosen;modal=null;render();window.scrollTo({top:0,behavior:'instant'});}
+function closeEditorModal(){
+ if(modal?.kind==='result'&&actionReturn){const draft=actionReturn;actionEditor(draft.id?state.actions.find(x=>x.id===draft.id):null);draftResults=draft.results;const restored=document.querySelector('#editor');for(const [name,v] of Object.entries(draft.values)){const el=restored.elements.namedItem(name);if(el){if(el.type==='checkbox')el.checked=!!v;else el.value=v;}}document.querySelector('#result-list').innerHTML=resultDraftHtml();actionReturn=null;return;}
+ modal=null;render();
+}
+function handleBack(){
+ if(modal){closeEditorModal();return true;}
+ if(route==='blocks'&&detail){navigate('blocks');return true;}
+ if(route!=='home'){navigate('home');return true;}
+ return false;
+}
+window.SamtBack=handleBack;
 function theme(){const preference=state.settings.appearance||'system';return preference==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):preference;}
 function btn(label,action,extra='',style=''){return `<button type="button" class="btn ${style}" data-action="${H(action)}" ${extra}>${H(label)}</button>`;}
 function field(label,name,value='',type='text',hint='',options=''){
@@ -308,7 +319,7 @@ root.addEventListener('click',e=>{const node=e.target.closest('[data-route],[dat
  if(node.dataset.stop)return;if(node.dataset.route){navigate(node.dataset.route);return;}
  if(node.dataset.filter){tab=node.dataset.filter;render();return;}if(node.dataset.activity){activityTab=node.dataset.activity;render();return;}if(node.dataset.settings){settingsTab=node.dataset.settings;render();return;}
  const a=node.dataset.action,id=node.dataset.id;
- if(a==='close-modal'){if(modal?.kind==='result'&&actionReturn){const draft=actionReturn;actionEditor(draft.id?state.actions.find(x=>x.id===draft.id):null);draftResults=draft.results;const restored=document.querySelector('#editor');for(const [name,v] of Object.entries(draft.values)){const el=restored.elements.namedItem(name);if(el){if(el.type==='checkbox')el.checked=!!v;else el.value=v;}}document.querySelector('#result-list').innerHTML=resultDraftHtml();actionReturn=null;}else{modal=null;render();}return;}if(a==='theme'){const modes=['system','light','dark'],next=modes[(modes.indexOf(state.settings.appearance)+1)%3];command('SET_SETTINGS',{changes:{appearance:next}});show(`Appearance: ${title(next)}`);return;}
+ if(a==='close-modal'){closeEditorModal();return;}if(a==='theme'){const modes=['system','light','dark'],next=modes[(modes.indexOf(state.settings.appearance)+1)%3];command('SET_SETTINGS',{changes:{appearance:next}});show(`Appearance: ${title(next)}`);return;}
  if(a==='go-blocks'||a==='back-blocks'){navigate('blocks');return;}if(a==='go-actions'){navigate('actions');return;}if(a==='go-settings'){settingsTab='general';navigate('settings');return;}
  if(a==='block-detail'){navigate('blocks',id);return;}if(a==='todo'){command('COMPLETE_TODO',{occurrenceId:id});return;}
  if(a==='resume-block'){command('RESUME_BLOCK',{blockId:id});return;}
@@ -365,7 +376,7 @@ root.addEventListener('click',e=>{const node=e.target.closest('[data-route],[dat
 });
 root.addEventListener('submit',e=>{e.preventDefault();const form=e.target,d=formObject(form);if(form.dataset.form==='settings'){command('SET_SETTINGS',{changes:{appearance:d.appearance,accent:d.accent,timezone:d.timezone,weekStartsOn:Number(d.weekStartsOn),capacityHours:Number(d.capacityHours),defaults:{...(state.settings.defaults||{}),actionListUnfinished:d.actionListUnfinished,cycleMissed:d.cycleMissed}}});show('Settings saved.');return;}if(form.dataset.form==='manager-filter'){dataFilter={query:d.query,type:d.type,status:d.status,usage:d.usage};render();return;}if(form.dataset.form==='bin-filter'){binFilter={query:d.query,type:d.type};render();return;}try{submit(form);}catch(error){show(error.message,'bad');}});
 root.addEventListener('change',e=>{if(e.target.matches('form[data-form=block] [name=type]'))toggleBlockFields();if(e.target.matches('[data-manager-select]')){const id=e.target.dataset.managerSelect;e.target.checked?dataSelected.add(id):dataSelected.delete(id);render();}if(e.target.matches('[data-bin-select]')){const id=e.target.dataset.binSelect;e.target.checked?binSelected.add(id):binSelected.delete(id);render();}});
-root.addEventListener('click',e=>{if(e.target.classList.contains('modal-shade')){modal=null;render();}});
+root.addEventListener('click',e=>{if(e.target.classList.contains('modal-shade'))closeEditorModal();});
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change',()=>render());
 if(!recovery){state=reconcile(state,Date.now());persist();syncNative();}
 window.SamtResume=()=>{try{const raw=window.SamtAndroid?.loadState?.();if(raw){const onPhone=JSON.parse(raw);validate(onPhone);state=reconcile(onPhone,Date.now());persist();syncNative();render();}}catch(e){show(`Phone data could not be refreshed: ${e.message}`,'bad');}};
