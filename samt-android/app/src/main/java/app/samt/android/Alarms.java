@@ -51,6 +51,17 @@ public final class Alarms {
         try {schedule(context,new JSONArray(context.getSharedPreferences("samt",Context.MODE_PRIVATE).getString("alarms","[]")));}
         catch(Exception ignored) {}
     }
+    public static boolean test(Context context,long delayMillis) throws Exception {
+        if(Build.VERSION.SDK_INT>=33&&context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)return false;
+        channel(context);long at=System.currentTimeMillis()+Math.max(3_000,delayMillis);
+        String id="test-"+at;PendingIntent pending=intent(context,id,"SAMT test alarm","Alarms are working on this phone","alarm",PendingIntent.FLAG_UPDATE_CURRENT);
+        AlarmManager manager=(AlarmManager)context.getSystemService(Context.ALARM_SERVICE);
+        try {
+            if(Build.VERSION.SDK_INT<31||manager.canScheduleExactAlarms())manager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,at,pending);
+            else manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,at,pending);
+        }catch(SecurityException e){manager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP,at,pending);}
+        return true;
+    }
     public static void replaceFromState(Context context,JSONObject state) throws Exception {
         long now=System.currentTimeMillis();List<JSONObject> requests=new ArrayList<>();
         JSONArray occurrences=state.optJSONArray("occurrences");
@@ -71,7 +82,8 @@ public final class Alarms {
         }
         JSONArray runs=state.optJSONArray("runs");
         if(runs!=null)for(int i=0;i<runs.length();i++) {
-            JSONObject run=runs.getJSONObject(i);if(!"IN_PROGRESS".equals(run.optString("status")))continue;
+            JSONObject run=runs.getJSONObject(i);String runStatus=run.optString("status");
+            if(!"IN_PROGRESS".equals(runStatus)&&!"READY_TO_FINISH".equals(runStatus)&&!"OVERDUE".equals(runStatus))continue;
             JSONArray children=run.optJSONArray("children");if(children==null)continue;
             for(int j=0;j<children.length();j++) {
                 JSONObject child=children.getJSONObject(j),config=child.optJSONObject("config"),snapshot=child.optJSONObject("definitionSnapshot");
