@@ -58,6 +58,12 @@ public class MainActivity extends Activity {
         super.onResume();
         if(web!=null)web.evaluateJavascript("window.SamtResume && window.SamtResume()",null);
     }
+    @Override public void onBackPressed() {
+        if(web==null){super.onBackPressed();return;}
+        web.evaluateJavascript("window.SamtBack ? window.SamtBack() : false",value->{
+            if(!"true".equals(value))MainActivity.super.onBackPressed();
+        });
+    }
     @Override protected void onDestroy() {
         if(web!=null){web.removeJavascriptInterface("SamtAndroid");web.destroy();web=null;}
         super.onDestroy();
