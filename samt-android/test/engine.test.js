@@ -209,4 +209,44 @@ assert.equal(dataClearImpact(manager,{categories:['actionLogs'],dateMode:'all'})
 manager=issue(manager,'CLEAR_DATA','2026-07-04T08:07:00Z',{categories:['actionLogs'],dateMode:'all'}).state;
 assert.equal(manager.actionLogs.length,0);assert.equal(manager.restorePoints.length,1);
 assert.equal(manager.restorePoints[0].state.actionLogs.length,1,'selective clear is recoverable');
-console.log('PASS: snapshots, DST rollover, missed routines, Action/Todo distinction, shared contexts, Results, cycles, alarms, Avoid, Workflow, Target, pause/resume and data safety');
+
+let projects=emptyState();
+let pAdd=issue(projects,'ADD_DEFINITION','2026-07-05T08:00:00Z',{kind:'actions',data:{name:'Research',completion:{type:'quantity',target:1}}});projects=pAdd.state;const research=pAdd.value;
+pAdd=issue(projects,'ADD_DEFINITION','2026-07-05T08:00:00Z',{kind:'actions',data:{name:'Build beta',completion:{type:'quantity',target:1}}});projects=pAdd.state;const buildBeta=pAdd.value;
+pAdd=issue(projects,'ADD_DEFINITION','2026-07-05T08:00:00Z',{kind:'blocks',data:{name:'Launch SAMT beta',type:'project',config:{outcome:'Ship a stable beta',requirements:'Android build passes',plannedStartAt:'2026-07-05T08:30:00Z',deadlineOffsetMinutes:120,deadlinePolicy:'continue_overdue',completionMode:'required_only',finishBehavior:'ready_to_finish',primary:true}}});projects=pAdd.state;const project=pAdd.value;
+pAdd=issue(projects,'ADD_RELATIONSHIP','2026-07-05T08:00:00Z',{blockId:project.id,kind:'Action',refId:research.id,required:true,config:{milestone:true}});projects=pAdd.state;const researchRel=pAdd.value;
+pAdd=issue(projects,'ADD_RELATIONSHIP','2026-07-05T08:00:00Z',{blockId:project.id,kind:'Action',refId:buildBeta.id,required:true,config:{dependsOn:[researchRel.id],availableOffsetMinutes:30,deadlineOffsetMinutes:60}});projects=pAdd.state;const buildRel=pAdd.value;
+projects=issue(projects,'ACTIVATE','2026-07-05T09:00:00Z',{blockId:project.id}).state;
+let projectRun=projects.runs.find(r=>r.blockId===project.id);
+assert.equal(projectRun.plannedStartAt,'2026-07-05T08:30:00Z');
+assert.equal(projectRun.actualStartAt,'2026-07-05T09:00:00.000Z');
+assert.equal(projectRun.deadlineAt,'2026-07-05T11:00:00.000Z');
+assert.equal(projectRun.children.find(c=>c.relationshipId===buildRel.id).status,'LOCKED','Project prerequisites lock downstream work');
+projects=issue(projects,'EDIT_DEFINITION','2026-07-05T09:01:00Z',{kind:'blocks',id:project.id,changes:{name:'Renamed live Project',config:{...project.config,outcome:'Changed future outcome'}}}).state;
+assert.equal(projects.runs.find(r=>r.id===projectRun.id).blockSnapshot.config.outcome,'Ship a stable beta','active Project keeps its start snapshot');
+projects=issue(projects,'LOG_ACTION','2026-07-05T09:10:00Z',{actionId:research.id,quantity:1}).state;
+projectRun=projects.runs.find(r=>r.id===projectRun.id);
+assert.equal(projectRun.children.find(c=>c.relationshipId===buildRel.id).status,'OPEN','Project child unlocks after prerequisite completion');
+const buildChild=projectRun.children.find(c=>c.relationshipId===buildRel.id);
+projects=issue(projects,'BLOCK_PROJECT_CHILD','2026-07-05T09:12:00Z',{runId:projectRun.id,childId:buildChild.id,reason:'Waiting for certificate',expectedUnblockAt:'2026-07-05T10:00:00Z'}).state;
+assert.equal(projects.runs.find(r=>r.id===projectRun.id).children.find(c=>c.id===buildChild.id).status,'BLOCKED');
+projects=issue(projects,'UNBLOCK_PROJECT_CHILD','2026-07-05T09:20:00Z',{runId:projectRun.id,childId:buildChild.id}).state;
+assert.equal(projects.runs.find(r=>r.id===projectRun.id).children.find(c=>c.id===buildChild.id).status,'OPEN');
+projects=reconcile(projects,at('2026-07-05T11:01:00Z'));projectRun=projects.runs.find(r=>r.id===projectRun.id);
+assert.equal(projectRun.status,'OVERDUE','soft Project deadline preserves the live Run');
+assert.equal(projectRun.children.find(c=>c.relationshipId===researchRel.id).status,'DONE','overdue never erases completed Project work');
+projects=issue(projects,'LOG_ACTION','2026-07-05T11:02:00Z',{actionId:buildBeta.id,quantity:1}).state;projectRun=projects.runs.find(r=>r.id===projectRun.id);
+assert.equal(projectRun.status,'READY_TO_FINISH','Project waits for an explicit finish by default');
+projects=issue(projects,'FINISH_RUN','2026-07-05T11:03:00Z',{runId:projectRun.id}).state;
+assert.equal(projects.runs.find(r=>r.id===projectRun.id).status,'COMPLETED');
+
+let hard=emptyState();
+pAdd=issue(hard,'ADD_DEFINITION','2026-07-06T09:00:00Z',{kind:'actions',data:{name:'Submit',completion:{type:'quantity',target:1}}});hard=pAdd.state;const hardAction=pAdd.value;
+pAdd=issue(hard,'ADD_DEFINITION','2026-07-06T09:00:00Z',{kind:'blocks',data:{name:'Hard deadline',type:'project',config:{deadlineOffsetMinutes:30,deadlinePolicy:'expire_unfinished',completionMode:'required_only',finishBehavior:'ready_to_finish'}}});hard=pAdd.state;const hardProject=pAdd.value;
+hard=issue(hard,'ADD_RELATIONSHIP','2026-07-06T09:00:00Z',{blockId:hardProject.id,kind:'Action',refId:hardAction.id,required:true}).state;
+hard=issue(hard,'ACTIVATE','2026-07-06T09:00:00Z',{blockId:hardProject.id}).state;
+hard=reconcile(hard,at('2026-07-06T09:31:00Z'));
+assert.equal(hard.runs.find(r=>r.blockId===hardProject.id).status,'EXPIRED','hard Project deadline can expire unfinished scope');
+assert.equal(hard.runs.find(r=>r.blockId===hardProject.id).children[0].status,'MISSED');
+
+console.log('PASS: snapshots, DST rollover, missed routines, Action/Todo distinction, shared contexts, Results, cycles, alarms, Avoid, Workflow, Project persistence/deadlines/dependencies, Target, pause/resume and data safety');

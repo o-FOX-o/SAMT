@@ -77,6 +77,23 @@ function assertUniqueBlockTree(s,root) {
   }
   walk(root,[root.name],new Set([root.id]));
 }
+function assertProjectDependencies(block) {
+  if(block.type!=='project')return;
+  const rels=block.relationships||[],ids=new Set(rels.map(r=>r.id)),graph=new Map();
+  for(const r of rels) {
+    const deps=r.config?.dependsOn||[];
+    insist(new Set(deps).size===deps.length,'A Project child has duplicate dependencies.');
+    insist(deps.every(x=>ids.has(x)&&x!==r.id),'Project dependency references a missing or self child.');
+    graph.set(r.id,deps);
+  }
+  const visiting=new Set(),done=new Set();
+  function walk(id) {
+    if(done.has(id))return;
+    insist(!visiting.has(id),'Circular Project dependency.');
+    visiting.add(id);for(const dep of graph.get(id)||[])walk(dep);visiting.delete(id);done.add(id);
+  }
+  for(const id of graph.keys())walk(id);
+}
 export function validate(s) {
   insist(s&&typeof s==='object'&&s.schemaVersion===VERSION,'Unsupported SAMT schema.');
   for(const key of arrays) insist(Array.isArray(s[key]),`Invalid ${key} collection.`);
@@ -105,6 +122,21 @@ export function validate(s) {
     insist(new Set(directActions).size===directActions.length,'The same Action cannot appear twice in one Block.');
     const directBlocks=block.relationships.filter(r=>r.kind==='Block').map(r=>r.refId);
     insist(new Set(directBlocks).size===directBlocks.length,'The same Block cannot appear twice in one Block.');
+    if(block.type==='project') {
+      const cfg=block.config||{};
+      if(cfg.plannedStartAt)insist(Number.isFinite(Date.parse(cfg.plannedStartAt)),'Project planned start is invalid.');
+      if(cfg.deadlineAt)insist(Number.isFinite(Date.parse(cfg.deadlineAt)),'Project deadline is invalid.');
+      insist(['continue_overdue','expire_unfinished'].includes(cfg.deadlinePolicy||'continue_overdue'),'Unknown Project deadline policy.');
+      insist(['ready_to_finish','auto_finish'].includes(cfg.finishBehavior||'ready_to_finish'),'Unknown Project finish behaviour.');
+      for(const r of block.relationships) {
+        const rc=r.config||{};
+        if(rc.availableAt)insist(Number.isFinite(Date.parse(rc.availableAt)),'Project child availability is invalid.');
+        if(rc.deadlineAt)insist(Number.isFinite(Date.parse(rc.deadlineAt)),'Project child deadline is invalid.');
+        if(rc.availableOffsetMinutes!=null)insist(Number(rc.availableOffsetMinutes)>=0,'Project child availability offset is invalid.');
+        if(rc.deadlineOffsetMinutes!=null)insist(Number(rc.deadlineOffsetMinutes)>=0,'Project child deadline offset is invalid.');
+      }
+      assertProjectDependencies(block);
+    }
     if(block.type==='action_list')for(const e of block.entries||[]) {
       insist(e.kind==='Action'||e.kind==='Todo','Invalid Action List entry.');
       if(e.kind==='Action')insist(!!byId(s,'actions',e.refId),'Action entry has no Action.');
@@ -157,13 +189,43 @@ function relationshipDue(rel,bounds,at,s,cadence) {
   }
   return zoned(dueKey,config.time,s.settings.timezone);
 }
+const WORKING_RUN_STATUSES=['IN_PROGRESS','READY_TO_FINISH','OVERDUE'];
+function isWorkingRun(run){return !!run&&WORKING_RUN_STATUSES.includes(run.status);}
+function relativeInstant(start,absolute,offsetMinutes) {
+  if(absolute)return iso(absolute);
+  const offset=Number(offsetMinutes);return Number.isFinite(offset)&&offset>0?iso(Date.parse(start)+offset*60000):null;
+}
+function refreshProjectChildren(run,at) {
+  if(run.type!=='project')return;
+  const when=iso(at),byRelationship=new Map((run.children||[]).map(c=>[c.relationshipId,c]));
+  for(const child of run.children||[]) {
+    if(['DONE','SKIPPED','MISSED'].includes(child.status))continue;
+    child.overdue=!!child.dueAt&&child.dueAt<=when;
+    if(child.status==='BLOCKED')continue;
+    const dependencies=child.config?.dependsOn||[];
+    const locked=dependencies.some(id=>!['DONE','SKIPPED'].includes(byRelationship.get(id)?.status));
+    if(locked)child.status='LOCKED';
+    else if(child.status==='LOCKED')child.status='OPEN';
+  }
+}
 function createRun(s,block,at,bounds=null,cadence=block.config?.period||'manual') {
-  const r={id:id('run'),blockId:block.id,type:block.type,startedAt:bounds?.start||iso(at),deadlineAt:bounds?.end||null,
-    status:'IN_PROGRESS',blockSnapshot:copy(block),children:(block.relationships||[]).map(rel=>({id:id('child'),relationshipId:rel.id,
-      kind:rel.kind,refId:rel.refId,required:rel.required!==false,status:'OPEN',config:copy(rel.config||{}),dueAt:relationshipDue(rel,bounds,at,s,cadence),snoozedUntil:null,
-      definitionSnapshot:copy(byId(s,rel.kind==='Action'?'actions':'blocks',rel.refId))})),
-    transitions:[],finishedAt:null,activationId:s.activations.find(x=>x.blockId===block.id)?.id||null};
+  const startedAt=bounds?.start||iso(at),project=block.type==='project',cfg=block.config||{};
+  const projectDeadline=project?relativeInstant(startedAt,cfg.deadlineAt,cfg.deadlineOffsetMinutes):null;
+  const r={id:id('run'),blockId:block.id,type:block.type,startedAt,deadlineAt:project?projectDeadline:(bounds?.end||null),
+    plannedStartAt:project?(cfg.plannedStartAt||null):null,actualStartAt:project?startedAt:null,overdueAt:null,
+    status:'IN_PROGRESS',blockSnapshot:copy(block),children:(block.relationships||[]).map(rel=>{
+      const rc=rel.config||{},child={id:id('child'),relationshipId:rel.id,kind:rel.kind,refId:rel.refId,required:rel.required!==false,status:'OPEN',
+        config:copy(rc),dueAt:relationshipDue(rel,bounds,at,s,cadence),snoozedUntil:null,
+        definitionSnapshot:copy(byId(s,rel.kind==='Action'?'actions':'blocks',rel.refId))};
+      if(project) {
+        child.availableAt=relativeInstant(startedAt,rc.availableAt,rc.availableOffsetMinutes);
+        child.dueAt=relativeInstant(startedAt,rc.deadlineAt,rc.deadlineOffsetMinutes);
+        child.milestone=!!rc.milestone;
+      }
+      return child;
+    }),transitions:[],finishedAt:null,activationId:s.activations.find(x=>x.blockId===block.id)?.id||null};
   if(block.type==='workflow')r.children.forEach((child,index)=>{if(index)child.status='LOCKED';});
+  if(project)refreshProjectChildren(r,at);
   s.runs.push(r);record(s,'run_started',{runId:r.id,blockId:block.id},at);return r;
 }
 function runProgress(run) {
@@ -180,15 +242,25 @@ function runProgress(run) {
     satisfied:requiredDone&&threshold,mode};
 }
 function maybeFinishRun(s,run,at) {
-  if(run.status!=='IN_PROGRESS')return;
-  const progress=runProgress(run),policy=run.blockSnapshot?.config?.afterMinimum||'auto_finish';
+  if(!isWorkingRun(run))return;
+  if(run.type==='project')refreshProjectChildren(run,at);
+  const progress=runProgress(run),config=run.blockSnapshot?.config||{},policy=config.afterMinimum||'auto_finish';
   run.completionPercentage=progress.percentage;
   if(progress.satisfied&&!run.minimumReachedAt)run.minimumReachedAt=iso(at);
+  if(run.type==='project') {
+    if(progress.satisfied) {
+      if(!run.conditionsSatisfiedAt)run.conditionsSatisfiedAt=iso(at);
+      const finish=config.finishBehavior||'ready_to_finish';
+      if(finish==='auto_finish')finishRun(s,run,at);
+      else run.status='READY_TO_FINISH';
+    } else if(run.status==='READY_TO_FINISH')run.status=run.overdueAt?'OVERDUE':'IN_PROGRESS';
+    return;
+  }
   if(progress.satisfied&&(policy==='auto_finish'||progress.done===progress.total||run.type==='workflow'))finishRun(s,run,at);
 }
 function finishRun(s,run,at,manualSuccess=false) {
-  if(run.status!=='IN_PROGRESS')return;
-  const end=run.deadlineAt&&run.deadlineAt<iso(at)?run.deadlineAt:iso(at);
+  if(!isWorkingRun(run))return;
+  const end=run.type==='project'?iso(at):(run.deadlineAt&&run.deadlineAt<iso(at)?run.deadlineAt:iso(at));
   for(const child of run.children) {
     if(child.kind==='Action'&&child.definitionSnapshot?.direction==='Avoid') {
       const actual=avoidValue(s,child.definitionSnapshot,run.startedAt,end);
@@ -231,6 +303,21 @@ function reconcileRoutines(s,at) {
       if(next.start>=current.end)break;
       last=createRun(s,block,new Date(next.start).getTime(),next,cadence);
     }
+  }
+}
+function reconcileProjects(s,at) {
+  const when=iso(at);
+  for(const run of s.runs.filter(r=>r.type==='project'&&(isWorkingRun(r)||r.status==='BLOCKED'))) {
+    refreshProjectChildren(run,at);
+    if(run.status!=='BLOCKED')maybeFinishRun(s,run,at);
+    if(!run.deadlineAt||run.deadlineAt>when||run.status==='COMPLETED')continue;
+    if(!run.overdueAt){run.overdueAt=run.deadlineAt;record(s,'project_overdue',{runId:run.id,blockId:run.blockId},run.deadlineAt);}
+    const cfg=run.blockSnapshot?.config||{},progress=runProgress(run);
+    if((cfg.deadlinePolicy||'continue_overdue')==='expire_unfinished'&&!progress.satisfied) {
+      for(const child of run.children)if(['OPEN','LOCKED','BLOCKED'].includes(child.status)){child.status='MISSED';child.resolvedAt=run.deadlineAt;}
+      run.status='EXPIRED';run.finishedAt=run.deadlineAt;
+      record(s,'project_expired',{runId:run.id,blockId:run.blockId,completed:progress.done},run.deadlineAt);
+    } else if(run.status==='IN_PROGRESS')run.status='OVERDUE';
   }
 }
 function eligibleEntry(e,at) {
@@ -370,7 +457,7 @@ function resumeActivation(s,activation,at) {
   const pausedRuns=s.runs.filter(r=>r.activationId===activation.id&&r.status==='PAUSED');
   for(const run of pausedRuns) {
     if(['daily','weekly'].includes(cadence)&&run.deadlineAt<=resumeAt)continue;
-    run.status='IN_PROGRESS';run.resumedAt=resumeAt;
+    run.status=run.statusBeforePause||'IN_PROGRESS';run.statusBeforePause=null;run.resumedAt=resumeAt;
     if(!['daily','weekly'].includes(cadence)) {
       if(run.deadlineAt)run.deadlineAt=iso(Date.parse(run.deadlineAt)+duration);
       for(const child of run.children){if(child.availableAt)child.availableAt=iso(Date.parse(child.availableAt)+duration);if(child.dueAt)child.dueAt=iso(Date.parse(child.dueAt)+duration);if(child.snoozedUntil)child.snoozedUntil=iso(Date.parse(child.snoozedUntil)+duration);}
@@ -388,12 +475,12 @@ function reconcileActivations(s,at) {
   for(const activation of s.activations.filter(a=>a.status==='PAUSED'&&a.resumeAt&&a.resumeAt<=iso(at)))resumeActivation(s,activation,at);
 }
 export function reconcile(input,at) {
-  const s=copy(input);validate(s);reconcileActivations(s,at);reconcileRoutines(s,at);reconcileOccurrences(s,at);reconcilePeriods(s,at);reconcileAvoid(s,at);ensureCycles(s,at);return s;
+  const s=copy(input);validate(s);reconcileActivations(s,at);reconcileRoutines(s,at);reconcileProjects(s,at);reconcileOccurrences(s,at);reconcilePeriods(s,at);reconcileAvoid(s,at);ensureCycles(s,at);return s;
 }
 function eligibleActionContexts(s,actionId,at) {
   const when=iso(at),refs=[];
   for(const o of s.occurrences)if(o.itemSnapshot?.id===actionId&&['OPEN','OVERDUE','CARRIED'].includes(o.status)&&o.dueAt<=when)refs.push(o.id);
-  for(const run of s.runs)if(run.status==='IN_PROGRESS'&&run.startedAt<=when&&(!run.deadlineAt||when<run.deadlineAt))
+  for(const run of s.runs)if(isWorkingRun(run)&&run.startedAt<=when&&(run.type==='project'||!run.deadlineAt||when<run.deadlineAt))
     for(const child of run.children)if(child.kind==='Action'&&child.refId===actionId&&child.status==='OPEN'&&(!child.availableAt||child.availableAt<=when))refs.push(child.id);
   return [...new Set(refs)];
 }
@@ -610,8 +697,8 @@ export function execute(input,command,at) {
       const activation=s.activations.find(x=>x.blockId===command.blockId&&x.status==='ACTIVE');insist(activation,'Active Block not found.');
       const resumeAt=iso(command.resumeAt);insist(resumeAt>iso(at),'Choose a future resume time.');
       activation.status='PAUSED';activation.pausedAt=iso(at);activation.resumeAt=resumeAt;
-      for(const run of s.runs.filter(r=>r.activationId===activation.id&&r.status==='IN_PROGRESS')) {
-        run.status='PAUSED';run.pausedAt=iso(at);run.transitions.push({id:id('transition'),event:'RUN_PAUSED',at:iso(at),resumeAt});
+      for(const run of s.runs.filter(r=>r.activationId===activation.id&&(isWorkingRun(r)||r.status==='BLOCKED'))) {
+        run.statusBeforePause=run.status;run.status='PAUSED';run.pausedAt=iso(at);run.transitions.push({id:id('transition'),event:'RUN_PAUSED',at:iso(at),resumeAt});
       }
       record(s,'block_paused',{blockId:activation.blockId,activationId:activation.id,resumeAt},at);value=activation;break;
     }
@@ -636,9 +723,35 @@ export function execute(input,command,at) {
       o.snoozedUntil=iso(Number(at)+Math.max(1,Number(command.minutes)||10)*60000);record(s,'occurrence_snoozed',{occurrenceId:o.id,until:o.snoozedUntil},at);value=o;break;
     }
     case 'RESOLVE_CHILD':{
-      const run=byId(s,'runs',command.runId),child=run?.children.find(c=>c.id===command.childId);insist(child&&run.status==='IN_PROGRESS','Open Run child not found.');
+      const run=byId(s,'runs',command.runId),child=run?.children.find(c=>c.id===command.childId);insist(child&&isWorkingRun(run)&&child.status==='OPEN','Open Run child not found.');
       insist(['DONE','SKIPPED'].includes(command.status),'Invalid child outcome.');child.status=command.status;child.resolvedAt=iso(at);child.notes=command.notes||'';
-      advanceWorkflow(run,child,at);maybeFinishRun(s,run,at);record(s,'run_child_resolved',{runId:run.id,childId:child.id,status:child.status},at);value=child;break;
+      advanceWorkflow(run,child,at);if(run.type==='project')refreshProjectChildren(run,at);maybeFinishRun(s,run,at);record(s,'run_child_resolved',{runId:run.id,childId:child.id,status:child.status},at);value=child;break;
+    }
+    case 'BLOCK_PROJECT_CHILD':{
+      const run=byId(s,'runs',command.runId),child=run?.children.find(c=>c.id===command.childId);
+      insist(run?.type==='project'&&isWorkingRun(run)&&child?.status==='OPEN','Open Project child not found.');
+      child.status='BLOCKED';child.blockedAt=iso(at);child.blockedReason=String(command.reason||'');child.expectedUnblockAt=command.expectedUnblockAt?iso(command.expectedUnblockAt):null;
+      record(s,'project_child_blocked',{runId:run.id,childId:child.id,reason:child.blockedReason},at);value=child;break;
+    }
+    case 'UNBLOCK_PROJECT_CHILD':{
+      const run=byId(s,'runs',command.runId),child=run?.children.find(c=>c.id===command.childId);
+      insist(run?.type==='project'&&child?.status==='BLOCKED','Blocked Project child not found.');
+      child.status='OPEN';child.unblockedAt=iso(at);refreshProjectChildren(run,at);
+      record(s,'project_child_unblocked',{runId:run.id,childId:child.id},at);value=child;break;
+    }
+    case 'BLOCK_PROJECT':{
+      const run=byId(s,'runs',command.runId);insist(run?.type==='project'&&isWorkingRun(run),'Active Project Run not found.');
+      run.statusBeforeBlocked=run.status;run.status='BLOCKED';run.blockedAt=iso(at);run.blockedReason=String(command.reason||'');run.expectedUnblockAt=command.expectedUnblockAt?iso(command.expectedUnblockAt):null;
+      record(s,'project_blocked',{runId:run.id,blockId:run.blockId,reason:run.blockedReason},at);value=run;break;
+    }
+    case 'UNBLOCK_PROJECT':{
+      const run=byId(s,'runs',command.runId);insist(run?.type==='project'&&run.status==='BLOCKED','Blocked Project Run not found.');
+      run.status=run.statusBeforeBlocked||'IN_PROGRESS';run.statusBeforeBlocked=null;run.unblockedAt=iso(at);refreshProjectChildren(run,at);maybeFinishRun(s,run,at);
+      record(s,'project_unblocked',{runId:run.id,blockId:run.blockId},at);value=run;break;
+    }
+    case 'CANCEL_RUN':{
+      const run=byId(s,'runs',command.runId);insist(run?.type==='project'&&(isWorkingRun(run)||['BLOCKED','PAUSED'].includes(run.status)),'Active Project Run not found.');
+      run.status='CANCELLED';run.finishedAt=iso(at);run.cancelReason=String(command.reason||'');record(s,'project_cancelled',{runId:run.id,blockId:run.blockId,reason:run.cancelReason},at);value=run;break;
     }
     case 'RETURN_STEP':{
       const run=byId(s,'runs',command.runId);insist(run?.type==='workflow'&&run.status==='IN_PROGRESS','Open Workflow Run not found.');
@@ -647,7 +760,14 @@ export function execute(input,command,at) {
       run.children[target].status='OPEN';run.transitions.push({id:id('transition'),event:'RETURN_STEP',at:iso(at),to:command.childId});
       record(s,'workflow_returned',{runId:run.id,childId:command.childId},at);value=run;break;
     }
-    case 'FINISH_RUN':{const run=byId(s,'runs',command.runId);insist(run,'Run not found.');finishRun(s,run,at,true);value=run;break;}
+    case 'FINISH_RUN':{
+      const run=byId(s,'runs',command.runId);insist(run,'Run not found.');
+      if(run.type==='project') {
+        const progress=runProgress(run),manual=run.blockSnapshot?.config?.completionMode==='manual';
+        insist(isWorkingRun(run)&&(run.status==='READY_TO_FINISH'||progress.satisfied||manual),'Project is not ready to finish.');
+      }
+      finishRun(s,run,at,true);value=run;break;
+    }
     case 'RESOLVE_CYCLE':{
       const cycle=s.cycles.find(x=>x.blockId===command.blockId);insist(cycle&&cycle.sequence.length,'Cycle has no participants.');
       const slot=cycle.sequence[cycle.index];cycle.history.push({id:id('cycle_event'),at:iso(at),index:cycle.index,outcome:command.outcome,slot:copy(slot)});
@@ -780,7 +900,7 @@ export function home(s,at) {
   return {now:s.runs.find(x=>x.status==='IN_PROGRESS')||due[0]||cycle||(target?{kind:'target',blockSnapshot:target.blockSnapshot,period:target}:null)||upcoming[0]||null,due,avoid:s.actions.filter(x=>x.direction==='Avoid'),
     today:open.filter(x=>localKey(x.dueAt,s.settings.timezone)===today),
     week:open.filter(x=>x.dueAt>=week.start&&x.dueAt<week.end),
-    project:s.runs.find(x=>x.type==='project'&&x.status==='IN_PROGRESS'&&x.blockSnapshot?.config?.primary)||s.runs.find(x=>x.type==='project'&&x.status==='IN_PROGRESS')||null,
+    project:s.runs.find(x=>x.type==='project'&&['IN_PROGRESS','READY_TO_FINISH','OVERDUE','BLOCKED','PAUSED'].includes(x.status)&&x.blockSnapshot?.config?.primary)||s.runs.find(x=>x.type==='project'&&['IN_PROGRESS','READY_TO_FINISH','OVERDUE','BLOCKED','PAUSED'].includes(x.status))||null,
     upcoming};
 }
 export function alarmRequests(s,at) {
@@ -795,7 +915,7 @@ export function alarmRequests(s,at) {
     const alarmTime=o.snoozedUntil?Date.parse(o.snoozedUntil):Date.parse(o.dueAt);
     if(e.alarm&&alarmTime>current)items.push({id:`${o.id}:alarm`,at:alarmTime,title,body:'Your SAMT alarm is due',kind:'alarm'});
   }
-  for(const run of s.runs.filter(x=>x.status==='IN_PROGRESS'))for(const child of run.children||[]) {
+  for(const run of s.runs.filter(x=>isWorkingRun(x)))for(const child of run.children||[]) {
     if(child.status!=='OPEN'||!child.dueAt)continue;
     const config=child.config||{},title=child.definitionSnapshot?.name||'SAMT reminder',due=Date.parse(child.dueAt);
     for(const minutes of config.reminderMinutes||[]) {
