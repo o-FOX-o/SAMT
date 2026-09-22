@@ -245,21 +245,26 @@ function submit(form){const m=modal;if(!m)return;const d=formObject(form);let va
  case 'unit':value=command('ADD_DEFINITION',{kind:'units',data:{name:d.name.trim(),symbol:d.symbol,dimension:d.dimension}});break;
  case 'result':{
    if(!d.label.trim())throw new Error('Give this Result a name.');
-   const field={id:`result_${crypto.randomUUID()}`,label:d.label.trim(),type:d.type,required:!!d.required,minimum:d.minimum===''?null:Number(d.minimum),maximum:d.maximum===''?null:Number(d.maximum),unitId:d.unitId||null,options:d.options?d.options.split(',').map(label=>({id:`option_${crypto.randomUUID()}`,label:label.trim()})).filter(x=>x.label):[]};
+   const allowedValues=csvNumbers(d.allowedValues);
+   const field={id:`result_${crypto.randomUUID()}`,label:d.label.trim(),type:d.type,required:!!d.required,minimum:d.minimum===''?null:Number(d.minimum),maximum:d.maximum===''?null:Number(d.maximum),allowedValues:allowedValues.length?allowedValues:null,zeroMeansMissed:!!d.zeroMeansMissed,unitId:d.unitId||null,options:d.options?d.options.split(',').map(label=>({id:`option_${crypto.randomUUID()}`,label:label.trim()})).filter(x=>x.label):[]};
    const draft=actionReturn;draft.results.push(field);actionEditor(draft.id?state.actions.find(x=>x.id===draft.id):null);draftResults=draft.results;
    const restored=document.querySelector('#editor');for(const [name,v] of Object.entries(draft.values)){const el=restored.elements.namedItem(name);if(el){if(el.type==='checkbox')el.checked=!!v;else el.value=v;}}
    document.querySelector('#result-list').innerHTML=resultDraftHtml();actionReturn=null;return;
  }
  case 'action':{
    const tags=Object.entries(d).filter(([k,v])=>k.startsWith('tag_')&&v).map(([k])=>k.slice(4));
-   const data={name:d.name.trim(),description:d.description.trim(),direction:d.direction,completion:d.completion==='time'?{type:'time',minimumMinutes:Number(d.minutes)||0}:{type:'quantity',target:Number(d.target)||1},resultFields:structuredClone(draftResults),tagIds:tags};
+   const data={name:d.name.trim(),description:d.description.trim(),direction:d.direction,completion:d.completion==='time'?{type:'time',minimumMinutes:Number(d.minutes)||0}:{type:'quantity',target:Number(d.target)||1},avoid:d.direction==='Avoid'?{period:d.avoidPeriod||'daily',limit:Math.max(0,Number(d.avoidLimit)||0),mode:'binary_limit'}:null,resultFields:structuredClone(draftResults),tagIds:tags};
    value=m.data.id?command('EDIT_DEFINITION',{kind:'actions',id:m.data.id,changes:data}):command('ADD_DEFINITION',{kind:'actions',data});break;
  }
  case 'block':{
    const previous=m.data.id?(state.blocks.find(b=>b.id===m.data.id)?.config||{}):{},config={...previous};
    if(d.type==='routine')config.period=d.routinePeriod;
    if(['routine','workflow'].includes(d.type)){config.completionMode=d.completionMode;config.completionValue=Number(d.completionValue)||0;config.afterMinimum=d.afterMinimum;}
-   if(d.type==='target'){config.period=d.targetPeriod;config.metric=d.metric;config.target=Number(d.target)||0;}
+   if(d.type==='target'){
+     const resultRefs=Object.entries(d).filter(([key,value])=>key.startsWith('target_result_')&&value).map(([key])=>{const [actionId,resultId]=key.slice(14).split('|');return {actionId,resultId};});
+     if(d.metric==='result'&&!resultRefs.length)throw new Error('Choose at least one numeric Result to total.');
+     config.period=d.targetPeriod;config.metric=d.metric;config.resultRefs=d.metric==='result'?resultRefs:[];config.resultId=resultRefs[0]?.resultId||null;config.target=Number(d.target)||0;
+   }
    if(d.type==='cycle'){config.missedPolicy=d.missedPolicy;config.smallCyclesPerBig=Math.max(1,Number(d.smallCyclesPerBig)||1);}
    if(d.type==='project'){
      config.outcome=d.projectOutcome.trim();config.requirements=d.projectRequirements.trim();config.primary=!!d.primary;
@@ -282,7 +287,9 @@ function submit(form){const m=modal;if(!m)return;const d=formObject(form);let va
  }
  case 'child':{
    const parent=state.blocks.find(b=>b.id===m.data.blockId);
-   const config={time:d.time||null,weekday:d.weekday===''?null:Number(d.weekday),reminderMinutes:d.reminders.split(',').map(Number).filter(x=>Number.isFinite(x)&&x>=0),alarm:!!d.alarm};
+   const config={time:d.time||null,weekday:d.weekday===''?null:Number(d.weekday),reminderMinutes:csvNumbers(d.reminders).filter(x=>x>=0),alarm:!!d.alarm};
+   if(d.childCompletion==='quantity')config.completion={type:'quantity',target:Number(d.childTarget)};
+   if(d.childCompletion==='time')config.completion={type:'time',minimumMinutes:Number(d.childMinutes)};
    if(parent?.type==='project'){
      config.milestone=!!d.milestone;config.availableAt=d.availableAt?new Date(d.availableAt).toISOString():null;config.availableOffsetMinutes=Number(d.availableDays)>0?Number(d.availableDays)*1440:null;
      config.deadlineAt=d.childDeadlineAt?new Date(d.childDeadlineAt).toISOString():null;config.deadlineOffsetMinutes=Number(d.childDeadlineDays)>0?Number(d.childDeadlineDays)*1440:null;
@@ -304,7 +311,8 @@ function submit(form){const m=modal;if(!m)return;const d=formObject(form);let va
  case 'pause-block':value=command('PAUSE_BLOCK',{blockId:m.data.blockId,resumeAt:new Date(d.resumeAt).toISOString()});break;
  case 'log':{
    const results={};for(const [k,v] of Object.entries(d))if(k.startsWith('result_'))results[k.slice(7)]=v;
-   value=command('LOG_ACTION',{actionId:m.data.actionId,occurredAt:d.occurredAt?new Date(d.occurredAt).toISOString():null,quantity:Number(d.quantity)||0,durationMinutes:Number(d.durationMinutes)||0,results,contexts:m.data.contextId?[m.data.contextId]:[],notes:d.notes});break;
+   const action=state.actions.find(a=>a.id===m.data.actionId),zeroMissed=action?.resultFields?.some(f=>f.zeroMeansMissed&&Number(results[f.id])===0);
+   value=command('LOG_ACTION',{actionId:m.data.actionId,occurredAt:d.occurredAt?new Date(d.occurredAt).toISOString():null,outcome:zeroMissed?'MISSED':(d.outcome||'DONE'),quantity:Number(d.quantity)||0,durationMinutes:Number(d.durationMinutes)||0,results,contexts:m.data.contextId?[m.data.contextId]:[],notes:d.notes});break;
  }
  case 'review':value=command('ADD_REVIEW',{period:d.period,highlights:d.highlights,notes:d.notes,next:d.next});break;
  case 'off':value=command('OFF_PERIOD',{blockId:m.data.blockId,entryId:m.data.entryId,start:new Date(d.start).toISOString(),end:d.end?new Date(d.end).toISOString():null,untilNotified:!!d.untilNotified});break;
