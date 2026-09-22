@@ -80,13 +80,17 @@ async function connect(){
   await evaluate(`(()=>{const projectType=document.querySelector('form[data-form=block] [name=type]');projectType.value='project';projectType.dispatchEvent(new Event('change',{bubbles:true}))})()`);
   assert.equal(await evaluate(`document.querySelector('[data-block-types="project"]').hidden`),false);
   assert.equal(await evaluate(`document.querySelector('[data-block-types="routine workflow"]').hidden`),true);
-  await evaluate(`(()=>{const projectForm=document.querySelector('form[data-form=block]');projectForm.elements.name.value='Ship beta';projectForm.elements.projectOutcome.value='Stable Android beta';projectForm.elements.projectRequirements.value='Green build';projectForm.elements.projectDeadlineMode.value='relative';projectForm.elements.projectDeadlineDays.value='2';projectForm.elements.primary.checked=true;projectForm.requestSubmit()})()`);
+  assert.equal(await evaluate(`document.querySelector('form[data-form=block]').elements.projectConditionMode.value`),'all');
+  assert.equal(await evaluate(`document.querySelector('form[data-form=block]').elements.projectResultCondition !== undefined`),true);
+  await evaluate(`(()=>{const projectForm=document.querySelector('form[data-form=block]');projectForm.elements.name.value='Ship beta';projectForm.elements.projectOutcome.value='Stable Android beta';projectForm.elements.projectRequirements.value='Green build';projectForm.elements.projectDeadlineMode.value='relative';projectForm.elements.projectDeadlineDays.value='2';projectForm.elements.projectConditionMode.value='any';projectForm.elements.primary.checked=true;projectForm.requestSubmit()})()`);
   await until(`JSON.parse(localStorage.getItem('samt.android.v3')).blocks.some(b=>b.name==='Ship beta')`);
   const projectDef=await evaluate(`JSON.parse(localStorage.getItem('samt.android.v3')).blocks.find(b=>b.name==='Ship beta')`);
   assert.equal(projectDef.type,'project');
   assert.equal(projectDef.config.outcome,'Stable Android beta');
   assert.equal(projectDef.config.deadlineOffsetMinutes,2880);
   assert.equal(projectDef.config.finishBehavior,'ready_to_finish');
+  assert.equal(projectDef.config.conditionMode,'any');
+  assert.equal(projectDef.config.conditions[0].type,'required');
   await evaluate(`[...document.querySelectorAll('article.card')].find(x=>x.querySelector('h2')?.textContent==='Ship beta').querySelector('[data-action=block-detail]').click()`);
   await until(`!![...document.querySelectorAll('.card h2')].find(x=>x.textContent==='Project brief')`);
   assert.equal(await evaluate(`document.body.textContent.includes('Stable Android beta')`),true);
