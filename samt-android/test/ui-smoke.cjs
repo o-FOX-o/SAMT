@@ -74,6 +74,24 @@ async function connect(){
   assert.equal(await evaluate(`document.querySelector('[data-block-types="collection action_list"]').hidden`),false);
   await evaluate(`document.querySelector('.modal [data-action=close-modal]').click()`);
 
+  // Project has its own persistent-outcome editor rather than inheriting Routine semantics.
+  await evaluate(`document.querySelector('[data-action=new-block]').click()`);
+  await until(`document.querySelector('form[data-form=block]') !== null`);
+  await evaluate(`const s=document.querySelector('form[data-form=block] [name=type]');s.value='project';s.dispatchEvent(new Event('change',{bubbles:true}))`);
+  assert.equal(await evaluate(`document.querySelector('[data-block-types="project"]').hidden`),false);
+  assert.equal(await evaluate(`document.querySelector('[data-block-types="routine workflow"]').hidden`),true);
+  await evaluate(`const f=document.querySelector('form[data-form=block]');f.elements.name.value='Ship beta';f.elements.projectOutcome.value='Stable Android beta';f.elements.projectRequirements.value='Green build';f.elements.projectDeadlineMode.value='relative';f.elements.projectDeadlineDays.value='2';f.elements.primary.checked=true;f.requestSubmit()`);
+  await until(`JSON.parse(localStorage.getItem('samt.android.v3')).blocks.some(b=>b.name==='Ship beta')`);
+  const projectDef=await evaluate(`JSON.parse(localStorage.getItem('samt.android.v3')).blocks.find(b=>b.name==='Ship beta')`);
+  assert.equal(projectDef.type,'project');
+  assert.equal(projectDef.config.outcome,'Stable Android beta');
+  assert.equal(projectDef.config.deadlineOffsetMinutes,2880);
+  assert.equal(projectDef.config.finishBehavior,'ready_to_finish');
+  await evaluate(`[...document.querySelectorAll('article.card')].find(x=>x.querySelector('h2')?.textContent==='Ship beta').querySelector('[data-action=block-detail]').click()`);
+  await until(`!![...document.querySelectorAll('.card h2')].find(x=>x.textContent==='Project brief')`);
+  assert.equal(await evaluate(`document.body.textContent.includes('Stable Android beta')`),true);
+  await evaluate(`document.querySelector('[data-action=back-blocks]').click()`);
+
   await evaluate('document.querySelector(".bottom [data-route=settings]").click()');
   await evaluate('document.querySelector("[data-settings=data]").click()');
   await until(`document.querySelector('.card h2')?.textContent === 'Backups'`);
@@ -98,5 +116,5 @@ async function connect(){
   await until('document.documentElement.dataset.theme === "dark"');
   await capture('ui-dark.png');
   socket.close();
-  console.log('PASS: mobile Today, prayer starter, active Runs, Data Manager, backup import, and Dark mode');
+  console.log('PASS: mobile Today, prayer starter, active Runs, Project editor, Data Manager, backup import, and Dark mode');
 })().catch(e=>{console.error(e);process.exitCode=1;});
