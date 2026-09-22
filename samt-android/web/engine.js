@@ -239,9 +239,9 @@ function createRun(s,block,at,bounds=null,cadence=block.config?.period||'manual'
         child.milestone=!!rc.milestone;
       }
       return child;
-    }),transitions:[],scopeChanges:project?[]:undefined,finishedAt:null,activationId:s.activations.find(x=>x.blockId===block.id)?.id||null};
+    }),transitions:[],finishedAt:null,activationId:s.activations.find(x=>x.blockId===block.id)?.id||null};
   if(block.type==='workflow')r.children.forEach((child,index)=>{if(index)child.status='LOCKED';});
-  if(project)refreshProjectChildren(r,at);
+  if(project){r.scopeChanges=[];refreshProjectChildren(r,at);}
   s.runs.push(r);record(s,'run_started',{runId:r.id,blockId:block.id},at);return r;
 }
 const PROJECT_CHILD_TERMINAL=['DONE','SKIPPED','EXCUSED','NOT_APPLICABLE','MISSED','REMOVED'];
