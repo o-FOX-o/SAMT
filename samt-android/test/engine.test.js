@@ -373,4 +373,28 @@ peSameDay=reconcile(peSameDay,at('2026-01-05T12:01:00Z'));
 assert.equal(peSameDay.runs.filter(r=>r.blockId===peSameRoutine.id&&r.status==='IN_PROGRESS').length,1);
 assert.equal(peSameDay.runs.filter(r=>r.blockId===peSameRoutine.id).length,1);
 
-console.log('PASS: snapshots, DST rollover, blank deadlines, archive safety, timezone rescheduling, midweek nested routines, missed logs, paused Targets, same-day resume, Action/Todo distinction, shared contexts, Results, cycles, alarms, Avoid, Workflow, Project conditions/scope/deadlines/dependencies, Target, pause/resume and data safety');
+
+
+// Discrete Result values, multi-Result Targets and relationship completion overrides.
+let peResults=emptyState();
+peAdd=issue(peResults,'ADD_DEFINITION','2026-02-02T08:00:00Z',{kind:'actions',data:{name:'Prayer score action',completion:{type:'quantity',target:1},resultFields:[{id:'score_a',label:'Score A',type:'score',required:true,minimum:0,maximum:10,allowedValues:[0,3,10]},{id:'score_b',label:'Score B',type:'score',required:true,minimum:0,maximum:10,allowedValues:[0,3,6,10]}]}});peResults=peAdd.state;const peScoredAction=peAdd.value;
+assert.throws(()=>issue(peResults,'LOG_ACTION','2026-02-02T09:00:00Z',{actionId:peScoredAction.id,quantity:1,results:{score_a:5,score_b:6}}),/allowed score values/);
+peAdd=issue(peResults,'ADD_DEFINITION','2026-02-02T08:01:00Z',{kind:'blocks',data:{name:'Combined score',type:'target',config:{period:'daily',metric:'result',resultRefs:[{actionId:peScoredAction.id,resultId:'score_a'},{actionId:peScoredAction.id,resultId:'score_b'}],target:13}}});peResults=peAdd.state;const peScoreTarget=peAdd.value;
+peResults=issue(peResults,'ADD_RELATIONSHIP','2026-02-02T08:01:00Z',{blockId:peScoreTarget.id,kind:'Action',refId:peScoredAction.id}).state;
+peResults=issue(peResults,'ACTIVATE','2026-02-02T08:02:00Z',{blockId:peScoreTarget.id}).state;
+peResults=issue(peResults,'LOG_ACTION','2026-02-02T09:00:00Z',{actionId:peScoredAction.id,quantity:1,results:{score_a:10,score_b:3}}).state;
+assert.equal(peResults.periods.find(p=>p.blockId===peScoreTarget.id&&p.status==='OPEN').actual,13,'Target totals multiple selected Result fields from one factual Log');
+
+let peOverride=emptyState();
+peAdd=issue(peOverride,'ADD_DEFINITION','2026-02-03T08:00:00Z',{kind:'actions',data:{name:'Shower',completion:{type:'quantity',target:1}}});peOverride=peAdd.state;const peOverrideAction=peAdd.value;
+peAdd=issue(peOverride,'ADD_DEFINITION','2026-02-03T08:00:00Z',{kind:'blocks',data:{name:'Weekly Hygiene',type:'routine',config:{period:'weekly'}}});peOverride=peAdd.state;const peOverrideRoutine=peAdd.value;
+peOverride=issue(peOverride,'ADD_RELATIONSHIP','2026-02-03T08:00:00Z',{blockId:peOverrideRoutine.id,kind:'Action',refId:peOverrideAction.id,config:{completion:{type:'quantity',target:2}}}).state;
+peOverride=issue(peOverride,'ACTIVATE','2026-02-03T08:00:00Z',{blockId:peOverrideRoutine.id,schedule:{period:'weekly'}}).state;
+peOverride=issue(peOverride,'LOG_ACTION','2026-02-03T09:00:00Z',{actionId:peOverrideAction.id,quantity:1}).state;
+assert.equal(peOverride.runs.find(r=>r.blockId===peOverrideRoutine.id).children[0].status,'OPEN','relationship override requires two completions');
+peOverride=issue(peOverride,'LOG_ACTION','2026-02-03T10:00:00Z',{actionId:peOverrideAction.id,quantity:1}).state;
+assert.equal(peOverride.runs.find(r=>r.blockId===peOverrideRoutine.id).children[0].status,'DONE');
+
+assert.throws(()=>issue(peOverride,'EDIT_DEFINITION','2026-02-03T10:05:00Z',{kind:'blocks',id:peOverrideRoutine.id,changes:{type:'project'}}),/Block type cannot be changed/);
+
+console.log('PASS: snapshots, DST rollover, blank deadlines, archive safety, timezone rescheduling, midweek nested routines, missed logs, discrete Results, multi-Result Targets, relationship overrides, paused Targets, same-day resume, Action/Todo distinction, shared contexts, cycles, alarms, Avoid, Workflow, Project conditions/scope/deadlines/dependencies, Target, pause/resume and data safety');
