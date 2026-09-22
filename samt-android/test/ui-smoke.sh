@@ -6,7 +6,8 @@ python3 -m http.server 8765 --bind 127.0.0.1 --directory web >/tmp/samt-http.log
 server_pid=$!
 profile="$(mktemp -d)"
 browser_pid=''
-trap 'kill "$server_pid" "$browser_pid" 2>/dev/null || true; rm -rf "$profile"' EXIT
+cleanup(){ kill "$server_pid" "$browser_pid" 2>/dev/null || true; wait "$server_pid" "$browser_pid" 2>/dev/null || true; rm -rf "$profile" 2>/dev/null || true; }
+trap cleanup EXIT
 for n in 1 2 3 4 5; do
   if curl -fsS http://127.0.0.1:8765/index.html >/dev/null; then break; fi
   sleep 1
