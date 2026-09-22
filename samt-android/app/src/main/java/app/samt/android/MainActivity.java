@@ -3,6 +3,7 @@ package app.samt.android;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlarmManager;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -102,8 +103,11 @@ public class MainActivity extends Activity {
             try {new JSONObject(json);boolean saved=getSharedPreferences("samt",MODE_PRIVATE).edit().putString("state",json).commit();if(saved)BoundaryReceiver.schedule(MainActivity.this);return saved;}
             catch(Exception e){return false;}
         }
-        @JavascriptInterface public void scheduleAlarms(String json) {
-            try {Alarms.replaceAll(MainActivity.this,json);}catch(Exception ignored){}
+        @JavascriptInterface public boolean scheduleAlarms(String json) {
+            try {Alarms.replaceAll(MainActivity.this,json);return true;}catch(Exception ignored){return false;}
+        }
+        @JavascriptInterface public boolean testAlarm() {
+            try {return Alarms.test(MainActivity.this,10_000);}catch(Exception ignored){return false;}
         }
         @JavascriptInterface public void exportFile(String filename,String mime,String content) {
             runOnUiThread(()->{
@@ -120,8 +124,18 @@ public class MainActivity extends Activity {
         @JavascriptInterface public String permissions() {
             AlarmManager manager=(AlarmManager)getSystemService(Context.ALARM_SERVICE);
             boolean exact=Build.VERSION.SDK_INT<31||manager.canScheduleExactAlarms();
-            boolean notifications=Build.VERSION.SDK_INT<33||checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;
-            return "{\"exact\":"+exact+",\"notifications\":"+notifications+"}";
+            NotificationManager notificationsManager=(NotificationManager)getSystemService(Context.NOTIFICATION_SERVICE);
+            boolean runtime=Build.VERSION.SDK_INT<33||checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)==PackageManager.PERMISSION_GRANTED;
+            boolean notifications=runtime&&(Build.VERSION.SDK_INT<24||notificationsManager.areNotificationsEnabled());
+            boolean channel=Build.VERSION.SDK_INT<26||notificationsManager.getNotificationChannel("samt_reminders")==null||
+                notificationsManager.getNotificationChannel("samt_reminders").getImportance()!=NotificationManager.IMPORTANCE_NONE;
+            int scheduled=0;long nextAt=0;
+            try {
+                org.json.JSONArray alarms=new org.json.JSONArray(getSharedPreferences("samt",MODE_PRIVATE).getString("alarms","[]"));
+                scheduled=alarms.length();for(int i=0;i<alarms.length();i++){long at=alarms.getJSONObject(i).optLong("at");if(at>0&&(nextAt==0||at<nextAt))nextAt=at;}
+            }catch(Exception ignored){}
+            return "{\"exact\":"+exact+",\"notifications\":"+notifications+",\"channel\":"+channel+
+                ",\"scheduled\":"+scheduled+",\"nextAt\":"+nextAt+"}";
         }
         @JavascriptInterface public void requestAlarmPermission() {
             if(Build.VERSION.SDK_INT<31)return;
@@ -129,7 +143,10 @@ public class MainActivity extends Activity {
                 .setData(Uri.parse("package:"+getPackageName()))));
         }
         @JavascriptInterface public void requestNotifications() {
-            if(Build.VERSION.SDK_INT>=33)runOnUiThread(()->requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},NOTIFICATION_REQUEST));
+            if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
+                runOnUiThread(()->requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},NOTIFICATION_REQUEST));
+            else runOnUiThread(()->startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName())));
         }
     }
 }
