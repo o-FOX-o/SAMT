@@ -21,7 +21,7 @@ async function connect(){
   const {send,socket}=await connect();
   const evaluate=async expression=>{
     const response=await send('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});
-    if(response.exceptionDetails)throw new Error(response.exceptionDetails.text);
+    if(response.exceptionDetails)throw new Error(response.exceptionDetails.exception?.description||response.exceptionDetails.text);
     return response.result.value;
   };
   const until=async expression=>{
