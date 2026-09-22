@@ -641,7 +641,7 @@ function addActionLog(s,command,at) {
   }
   record(s,'action_logged',{actionLogId:log.id,actionId:a.id,contexts,occurredAt,outcome},at);return log;
 }
-function mutableProjectRunfunction mutableProjectRun(run){return run?.type==='project'&&(isWorkingRun(run)||['BLOCKED','PAUSED'].includes(run.status));}
+function mutableProjectRun(run){return run?.type==='project'&&(isWorkingRun(run)||['BLOCKED','PAUSED'].includes(run.status));}
 function projectChildFromRelationship(s,run,rel,at) {
   const rc=rel.config||{},child={id:id('child'),relationshipId:rel.id,kind:rel.kind,refId:rel.refId,required:rel.required!==false,status:'OPEN',inScope:true,scopeAddedAt:iso(at),
     config:copy(rc),snoozedUntil:null,definitionSnapshot:copy(byId(s,rel.kind==='Action'?'actions':'blocks',rel.refId))};
