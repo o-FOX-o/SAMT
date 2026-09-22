@@ -81,3 +81,17 @@ survives app restart, appears in backup/import and has a relevant test.
 9. Backup/import round trip retains positions, Runs, Occurrences, Logs,
    Results, Bin, settings and theme; invalid import changes nothing.
 10. Alarm/notification fires with the app closed and is rescheduled on reboot.
+
+
+## 0.2.101 verification notes
+
+The automated contract now includes regression coverage for blank deadlines,
+timezone regeneration, archive cancellation, nested Routine activation,
+same-day pause/resume, paused Target intervals, explicit Missed logs, discrete
+Result values, multi-Result Target totals, relationship completion overrides,
+Project conditions/scope and data safety.
+
+The Android client also exposes alarm permission state, scheduled-alarm count,
+next alarm, upcoming reminders and a ten-second test alarm. Closed-app
+notification delivery remains a physical-device acceptance check rather than a
+CI assertion.
