@@ -179,6 +179,7 @@ function resultValue(field,raw,s) {
     if(field.type==='percentage')insist(n>=0&&n<=100,'Percentage must be 0–100.');
     if(field.minimum!=null)insist(n>=field.minimum,'Result below its minimum.');
     if(field.maximum!=null)insist(n<=field.maximum,'Result above its maximum.');
+    if(field.allowedValues?.length)insist(field.allowedValues.some(x=>Number(x)===n),'Choose one of the allowed score values.');
     return n;
   }
   if(field.type==='measurement') {
@@ -492,7 +493,12 @@ function targetActual(s,block,bounds) {
   const kind=block.config?.metric||'count';
   if(kind==='minutes')return logs.reduce((n,l)=>n+(l.durationMinutes||0),0);
   if(kind==='quantity')return logs.reduce((n,l)=>n+(l.quantity||0),0);
-  if(kind==='result')return logs.reduce((n,l)=>n+(Number(l.results?.[block.config?.resultId]?.value??l.results?.[block.config?.resultId]??0)||0),0);
+  if(kind==='result') {
+    const refs=block.config?.resultRefs||[];
+    if(refs.length)return logs.reduce((total,log)=>total+refs.filter(ref=>!ref.actionId||ref.actionId===log.actionId)
+      .reduce((sum,ref)=>sum+(Number(log.results?.[ref.resultId]?.value??log.results?.[ref.resultId]??0)||0),0),0);
+    return logs.reduce((n,l)=>n+(Number(l.results?.[block.config?.resultId]?.value??l.results?.[block.config?.resultId]??0)||0),0);
+  }
   return logs.length;
 }
 function reconcilePeriods(s,at) {
@@ -602,24 +608,29 @@ function eligibleActionContexts(s,actionId,at) {
 }
 function addActionLog(s,command,at) {
   const a=byId(s,'actions',command.actionId);insist(a&&a.status!=='ARCHIVED','Action unavailable.');
+  const outcome=command.outcome||'DONE';insist(['DONE','MISSED'].includes(outcome),'Unknown Action outcome.');
+  insist(!(a.direction==='Avoid'&&outcome==='MISSED'),'Avoid Actions record violations, not missed outcomes.');
   const quantity=command.quantity==null?(a.direction==='Avoid'?1:0):Number(command.quantity),durationMinutes=command.durationMinutes==null?0:Number(command.durationMinutes);
   insist(Number.isFinite(quantity)&&quantity>=0&&Number.isFinite(durationMinutes)&&durationMinutes>=0,'Invalid quantity or time.');
-  const kind=a.completion?.type||'quantity';if(a.direction!=='Avoid')insist((kind==='time'?durationMinutes:quantity)>0,'Log a positive amount.');
+  const kind=a.completion?.type||'quantity';if(a.direction!=='Avoid'&&outcome!=='MISSED')insist((kind==='time'?durationMinutes:quantity)>0,'Log a positive amount.');
   const results={};for(const f of a.resultFields||[])results[f.id]=resultValue(f,command.results?.[f.id],s);
   const occurredAt=command.occurredAt?iso(command.occurredAt):iso(at);
   insist(Date.parse(occurredAt)<=Number(at)+600000,'The Action time cannot be in the future.');
-  const auto=eligibleActionContexts(s,a.id,at),contexts=[...new Set([...auto,...(command.contexts||[])])];
+  const auto=eligibleActionContexts(s,a.id,Date.parse(occurredAt)),contexts=[...new Set([...auto,...(command.contexts||[])])];
   for(const ref of contexts) {
-    const occurrence=byId(s,'occurrences',ref),child=s.runs.flatMap(r=>r.children).find(c=>c.id===ref);
+    const occurrence=byId(s,'occurrences',ref),owner=s.runs.find(r=>(r.children||[]).some(c=>c.id===ref)),child=owner?.children.find(c=>c.id===ref);
     insist(occurrence?.itemSnapshot?.id===a.id||child?.refId===a.id,`Context ${ref} does not belong to this Action.`);
+    if(occurrence)insist(['OPEN','OVERDUE','CARRIED'].includes(occurrence.status)&&occurrence.dueAt<=occurredAt,'Occurrence context is unavailable or not open.');
+    if(child)insist(isWorkingRun(owner)&&owner.startedAt<=occurredAt&&(owner.type==='project'||!owner.deadlineAt||occurredAt<owner.deadlineAt)&&child.status==='OPEN'&&(!child.availableAt||child.availableAt<=occurredAt),'Run context is unavailable or not open.');
   }
-  const log={id:id('log'),actionId:a.id,actionSnapshot:copy(a),resultSnapshots:copy(a.resultFields),at:occurredAt,recordedAt:iso(at),quantity,durationMinutes,results,contexts,notes:String(command.notes||'')};
+  const log={id:id('log'),actionId:a.id,actionSnapshot:copy(a),resultSnapshots:copy(a.resultFields),at:occurredAt,recordedAt:iso(at),outcome,quantity,durationMinutes,results,contexts,notes:String(command.notes||'')};
   s.actionLogs.push(log);
   for(const ref of contexts) {
-    const o=byId(s,'occurrences',ref);if(o&&['OPEN','OVERDUE','CARRIED'].includes(o.status)&&o.itemSnapshot?.id===a.id) {o.status='COMPLETED';o.resolvedAt=iso(at);o.actionLogId=log.id;}
+    const o=byId(s,'occurrences',ref);if(o&&['OPEN','OVERDUE','CARRIED'].includes(o.status)&&o.itemSnapshot?.id===a.id) {o.status=outcome==='MISSED'?'MISSED':'COMPLETED';o.resolvedAt=iso(at);o.actionLogId=log.id;}
     for(const run of s.runs)for(const child of run.children)if(child.id===ref&&child.refId===a.id&&child.status==='OPEN') {
       if(child.definitionSnapshot?.direction==='Avoid')continue;
-      const completion=child.definitionSnapshot?.completion||{type:'quantity',target:1};
+      if(outcome==='MISSED'){child.status='MISSED';child.resolvedAt=iso(at);child.actionLogIds=[...(child.actionLogIds||[]),log.id];child.actionLogId=log.id;maybeFinishRun(s,run,at);continue;}
+      const completion=child.config?.completion||child.definitionSnapshot?.completion||{type:'quantity',target:1};
       const delta=completion.type==='time'?durationMinutes:quantity;
       child.progress=(child.progress||0)+delta;
       child.actionLogIds=[...(child.actionLogIds||[]),log.id];child.actionLogId=log.id;
@@ -628,9 +639,9 @@ function addActionLog(s,command,at) {
       maybeFinishRun(s,run,at);
     }
   }
-  record(s,'action_logged',{actionLogId:log.id,actionId:a.id,contexts,occurredAt},at);return log;
+  record(s,'action_logged',{actionLogId:log.id,actionId:a.id,contexts,occurredAt,outcome},at);return log;
 }
-function mutableProjectRun(run){return run?.type==='project'&&(isWorkingRun(run)||['BLOCKED','PAUSED'].includes(run.status));}
+function mutableProjectRunfunction mutableProjectRun(run){return run?.type==='project'&&(isWorkingRun(run)||['BLOCKED','PAUSED'].includes(run.status));}
 function projectChildFromRelationship(s,run,rel,at) {
   const rc=rel.config||{},child={id:id('child'),relationshipId:rel.id,kind:rel.kind,refId:rel.refId,required:rel.required!==false,status:'OPEN',inScope:true,scopeAddedAt:iso(at),
     config:copy(rc),snoozedUntil:null,definitionSnapshot:copy(byId(s,rel.kind==='Action'?'actions':'blocks',rel.refId))};
