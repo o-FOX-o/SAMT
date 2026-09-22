@@ -789,6 +789,7 @@ export function execute(input,command,at) {
     case 'ADD_STARTER':value=addStarter(s,command.which,at);break;
     case 'EDIT_DEFINITION':{
       const d=byId(s,command.kind,command.id);insist(d,'Definition not found.');
+      if(command.kind==='blocks'&&command.changes.type!=null)insist(command.changes.type===d.type,'Block type cannot be changed after creation.');
       const revised={...d,...copy(command.changes),id:d.id,createdAt:d.createdAt,updatedAt:iso(at)};
       if(command.kind==='actions'&&command.changes.resultFields)for(const field of revised.resultFields) {
         const old=d.resultFields.find(x=>x.id===field.id);field.id=field.id||id('result');
@@ -830,13 +831,16 @@ export function execute(input,command,at) {
     }
     case 'EDIT_ENTRY':{
       const b=byId(s,'blocks',command.blockId),e=b?.entries?.find(x=>x.id===command.entryId);insist(e,'Entry not found.');
+      supersedeFutureOccurrences(s,o=>o.entryId===e.id,at,'entry_edited');
       Object.assign(e,copy(command.changes),{id:e.id,createdAt:e.createdAt,updatedAt:iso(at)});
       record(s,'entry_edited',{entryId:e.id},at);value=e;break;
     }
     case 'OFF_PERIOD':{
       const e=byId(s,'blocks',command.blockId)?.entries?.find(x=>x.id===command.entryId);insist(e,'Entry not found.');
       const p={id:id('off'),start:iso(command.start),end:command.end?iso(command.end):null,untilNotified:!!command.untilNotified,notifiedAt:null};
-      insist(!p.end||p.end>p.start,'Off Period must end after it starts.');e.offPeriods.push(p);value=p;record(s,'off_period_added',{entryId:e.id,offId:p.id},at);break;
+      insist(!p.end||p.end>p.start,'Off Period must end after it starts.');e.offPeriods.push(p);
+      supersedeFutureOccurrences(s,o=>o.entryId===e.id&&o.dueAt>=p.start&&(!p.end||o.dueAt<p.end),at,'off_period');
+      value=p;record(s,'off_period_added',{entryId:e.id,offId:p.id},at);break;
     }
     case 'STOP_OFF_PERIOD':{
       const e=byId(s,'blocks',command.blockId)?.entries?.find(x=>x.id===command.entryId),p=e?.offPeriods?.find(x=>x.id===command.offId);insist(p,'Off Period not found.');
@@ -844,7 +848,7 @@ export function execute(input,command,at) {
     }
     case 'PAUSE_ENTRY':{
       const e=byId(s,'blocks',command.blockId)?.entries?.find(x=>x.id===command.entryId);insist(e,'Entry not found.');
-      e.paused=!!command.paused;e.updatedAt=iso(at);record(s,e.paused?'entry_paused':'entry_resumed',{entryId:e.id},at);value=e;break;
+      e.paused=!!command.paused;e.updatedAt=iso(at);if(e.paused)supersedeFutureOccurrences(s,o=>o.entryId===e.id,at,'entry_paused');record(s,e.paused?'entry_paused':'entry_resumed',{entryId:e.id},at);value=e;break;
     }
     case 'ACTIVATE':{
       const b=byId(s,'blocks',command.blockId);insist(b&&b.status!=='ARCHIVED'&&b.type!=='collection','Executable Block not found.');
