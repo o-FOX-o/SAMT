@@ -77,10 +77,10 @@ async function connect(){
   // Project has its own persistent-outcome editor rather than inheriting Routine semantics.
   await evaluate(`document.querySelector('[data-action=new-block]').click()`);
   await until(`document.querySelector('form[data-form=block]') !== null`);
-  await evaluate(`const s=document.querySelector('form[data-form=block] [name=type]');s.value='project';s.dispatchEvent(new Event('change',{bubbles:true}))`);
+  await evaluate(`(()=>{const projectType=document.querySelector('form[data-form=block] [name=type]');projectType.value='project';projectType.dispatchEvent(new Event('change',{bubbles:true}))})()`);
   assert.equal(await evaluate(`document.querySelector('[data-block-types="project"]').hidden`),false);
   assert.equal(await evaluate(`document.querySelector('[data-block-types="routine workflow"]').hidden`),true);
-  await evaluate(`const f=document.querySelector('form[data-form=block]');f.elements.name.value='Ship beta';f.elements.projectOutcome.value='Stable Android beta';f.elements.projectRequirements.value='Green build';f.elements.projectDeadlineMode.value='relative';f.elements.projectDeadlineDays.value='2';f.elements.primary.checked=true;f.requestSubmit()`);
+  await evaluate(`(()=>{const projectForm=document.querySelector('form[data-form=block]');projectForm.elements.name.value='Ship beta';projectForm.elements.projectOutcome.value='Stable Android beta';projectForm.elements.projectRequirements.value='Green build';projectForm.elements.projectDeadlineMode.value='relative';projectForm.elements.projectDeadlineDays.value='2';projectForm.elements.primary.checked=true;projectForm.requestSubmit()})()`);
   await until(`JSON.parse(localStorage.getItem('samt.android.v3')).blocks.some(b=>b.name==='Ship beta')`);
   const projectDef=await evaluate(`JSON.parse(localStorage.getItem('samt.android.v3')).blocks.find(b=>b.name==='Ship beta')`);
   assert.equal(projectDef.type,'project');
