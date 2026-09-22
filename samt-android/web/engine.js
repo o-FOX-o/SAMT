@@ -107,7 +107,10 @@ export function validate(s) {
     insist(['Do','Avoid'].includes(a.direction),'Action direction must be Do or Avoid.');
     insist(['quantity','time'].includes(a.completion?.type),'Action completion must be quantity or time.');
     insist(Array.isArray(a.resultFields)&&a.resultFields.length<=10,'Actions allow up to ten Results.');
-    for(const r of a.resultFields){insist(RESULT_TYPES.includes(r.type),'Invalid Result type.');insist(typeof r.label==='string'&&r.label.trim(),'A Result needs a name.');}
+    for(const r of a.resultFields){
+      insist(RESULT_TYPES.includes(r.type),'Invalid Result type.');insist(typeof r.label==='string'&&r.label.trim(),'A Result needs a name.');
+      if(r.allowedValues?.length){insist(['percentage','score','measurement'].includes(r.type),'Allowed values require a numeric Result.');insist(r.allowedValues.every(Number.isFinite),'Allowed Result values must be numeric.');insist(new Set(r.allowedValues).size===r.allowedValues.length,'Allowed Result values must be unique.');}
+    }
     for(const tagId of a.tagIds||[])insist(!!byId(s,'tags',tagId),'Action references missing Tag.');
   }
   for(const block of s.blocks) {
@@ -117,6 +120,12 @@ export function validate(s) {
       insist(r.kind==='Action'||r.kind==='Block','Invalid child kind.');
       insist(!!byId(s,r.kind==='Action'?'actions':'blocks',r.refId),'Missing child definition.');
       if(r.kind==='Block')insist(!references(s,r.refId,block.id),'Circular Block reference.');
+      if(r.config?.completion){
+        insist(r.kind==='Action','Only Action relationships can override completion.');
+        insist(['quantity','time'].includes(r.config.completion.type),'Relationship completion must be quantity or time.');
+        if(r.config.completion.type==='quantity')insist(Number(r.config.completion.target)>0,'Relationship quantity target must be positive.');
+        if(r.config.completion.type==='time')insist(Number(r.config.completion.minimumMinutes)>0,'Relationship time minimum must be positive.');
+      }
     }
     const directActions=block.relationships.filter(r=>r.kind==='Action').map(r=>r.refId);
     insist(new Set(directActions).size===directActions.length,'The same Action cannot appear twice in one Block.');
@@ -151,6 +160,14 @@ export function validate(s) {
           insist(['latest','average','sum','min','max'].includes(condition.aggregate||'latest'),'Unknown Project Result aggregation.');
           insist(Number.isFinite(Number(condition.value)),'Project Result threshold is invalid.');
         }
+      }
+    }
+    if(block.type==='target'&&block.config?.metric==='result') {
+      const refs=block.config?.resultRefs||[];
+      if(refs.length)for(const ref of refs) {
+        const action=ref.actionId?byId(s,'actions',ref.actionId):null;
+        if(action)insist(action.resultFields?.some(r=>r.id===ref.resultId&&['percentage','score','measurement'].includes(r.type)),'Target references a missing numeric Result.');
+        else insist(s.actions.some(a=>a.resultFields?.some(r=>r.id===ref.resultId&&['percentage','score','measurement'].includes(r.type))),'Target references a missing numeric Result.');
       }
     }
     if(block.type==='action_list')for(const e of block.entries||[]) {
@@ -608,12 +625,16 @@ function eligibleActionContexts(s,actionId,at) {
 }
 function addActionLog(s,command,at) {
   const a=byId(s,'actions',command.actionId);insist(a&&a.status!=='ARCHIVED','Action unavailable.');
-  const outcome=command.outcome||'DONE';insist(['DONE','MISSED'].includes(outcome),'Unknown Action outcome.');
+  let outcome=command.outcome||'DONE';insist(['DONE','MISSED'].includes(outcome),'Unknown Action outcome.');
   insist(!(a.direction==='Avoid'&&outcome==='MISSED'),'Avoid Actions record violations, not missed outcomes.');
   const quantity=command.quantity==null?(a.direction==='Avoid'?1:0):Number(command.quantity),durationMinutes=command.durationMinutes==null?0:Number(command.durationMinutes);
   insist(Number.isFinite(quantity)&&quantity>=0&&Number.isFinite(durationMinutes)&&durationMinutes>=0,'Invalid quantity or time.');
   const kind=a.completion?.type||'quantity';if(a.direction!=='Avoid'&&outcome!=='MISSED')insist((kind==='time'?durationMinutes:quantity)>0,'Log a positive amount.');
-  const results={};for(const f of a.resultFields||[])results[f.id]=resultValue(f,command.results?.[f.id],s);
+  const results={};for(const f of a.resultFields||[]) {
+    const raw=command.results?.[f.id];
+    results[f.id]=outcome==='MISSED'&&(raw==null||raw==='')?null:resultValue(f,raw,s);
+  }
+  if(a.direction!=='Avoid'&&(a.resultFields||[]).some(f=>f.zeroMeansMissed&&Number(results[f.id])===0))outcome='MISSED';
   const occurredAt=command.occurredAt?iso(command.occurredAt):iso(at);
   insist(Date.parse(occurredAt)<=Number(at)+600000,'The Action time cannot be in the future.');
   const auto=eligibleActionContexts(s,a.id,Date.parse(occurredAt)),contexts=[...new Set([...auto,...(command.contexts||[])])];
