@@ -12,6 +12,11 @@ for n in 1 2 3 4 5; do
   sleep 1
 done
 "$browser" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage \
-  --remote-debugging-port=9222 --user-data-dir="$profile" about:blank >/tmp/samt-chrome.log 2>&1 &
+  --remote-debugging-address=127.0.0.1 --remote-debugging-port=9222 \
+  --no-first-run --no-default-browser-check --user-data-dir="$profile" \
+  about:blank >/tmp/samt-chrome.log 2>&1 &
 browser_pid=$!
-node test/ui-smoke.cjs
+if ! node test/ui-smoke.cjs; then
+  tail -n 120 /tmp/samt-http.log /tmp/samt-chrome.log || true
+  exit 1
+fi

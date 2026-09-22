@@ -4,7 +4,7 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 
 async function connect(){
   let pages;
-  for(let attempt=0;attempt<50;attempt++) {
+  for(let attempt=0;attempt<150;attempt++) {
     try {pages=await (await fetch('http://127.0.0.1:9222/json')).json();if(pages.some(p=>p.type==='page'))break;}catch(e){}
     await pause(200);
   }
