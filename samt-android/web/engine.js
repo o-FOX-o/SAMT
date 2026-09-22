@@ -136,6 +136,22 @@ export function validate(s) {
         if(rc.deadlineOffsetMinutes!=null)insist(Number(rc.deadlineOffsetMinutes)>=0,'Project child deadline offset is invalid.');
       }
       assertProjectDependencies(block);
+      insist(['all','any'].includes(cfg.conditionMode||'all'),'Unknown Project condition logic.');
+      const conditions=cfg.conditions||[];
+      insist(Array.isArray(conditions)&&conditions.length<=10,'Projects allow up to ten completion conditions.');
+      for(const condition of conditions) {
+        insist(['required','count','percentage','target','result','manual'].includes(condition.type),'Unknown Project completion condition.');
+        if(condition.type==='count')insist(Number(condition.value)>=0,'Project count condition is invalid.');
+        if(condition.type==='percentage')insist(Number(condition.value)>=0&&Number(condition.value)<=100,'Project percentage must be 0–100.');
+        if(condition.type==='target')insist(byId(s,'blocks',condition.targetBlockId)?.type==='target','Project Target condition references a missing Target.');
+        if(condition.type==='result') {
+          const action=byId(s,'actions',condition.actionId),field=action?.resultFields?.find(x=>x.id===condition.resultId);
+          insist(action&&field&&['percentage','score','measurement'].includes(field.type),'Project Result condition requires a numeric Action Result.');
+          insist(['>=','>','<=','<','==','!='].includes(condition.operator||'>='),'Unknown Project Result comparison.');
+          insist(['latest','average','sum','min','max'].includes(condition.aggregate||'latest'),'Unknown Project Result aggregation.');
+          insist(Number.isFinite(Number(condition.value)),'Project Result threshold is invalid.');
+        }
+      }
     }
     if(block.type==='action_list')for(const e of block.entries||[]) {
       insist(e.kind==='Action'||e.kind==='Todo','Invalid Action List entry.');
@@ -199,11 +215,11 @@ function refreshProjectChildren(run,at) {
   if(run.type!=='project')return;
   const when=iso(at),byRelationship=new Map((run.children||[]).map(c=>[c.relationshipId,c]));
   for(const child of run.children||[]) {
-    if(['DONE','SKIPPED','MISSED'].includes(child.status))continue;
+    if(PROJECT_CHILD_TERMINAL.includes(child.status))continue;
     child.overdue=!!child.dueAt&&child.dueAt<=when;
     if(child.status==='BLOCKED')continue;
     const dependencies=child.config?.dependsOn||[];
-    const locked=dependencies.some(id=>!['DONE','SKIPPED'].includes(byRelationship.get(id)?.status));
+    const locked=dependencies.some(id=>!PROJECT_CHILD_SATISFIED.includes(byRelationship.get(id)?.status));
     if(locked)child.status='LOCKED';
     else if(child.status==='LOCKED')child.status='OPEN';
   }
@@ -228,24 +244,84 @@ function createRun(s,block,at,bounds=null,cadence=block.config?.period||'manual'
   if(project)refreshProjectChildren(r,at);
   s.runs.push(r);record(s,'run_started',{runId:r.id,blockId:block.id},at);return r;
 }
-function runProgress(run) {
-  const children=run.children||[],done=children.filter(x=>x.status==='DONE').length;
-  const required=children.filter(x=>x.required),requiredDone=required.every(x=>x.status==='DONE');
-  const config=run.blockSnapshot?.config||{},mode=config.completionMode||'required_only';
+const PROJECT_CHILD_TERMINAL=['DONE','SKIPPED','EXCUSED','NOT_APPLICABLE','MISSED','REMOVED'];
+const PROJECT_CHILD_SATISFIED=['DONE','EXCUSED','NOT_APPLICABLE'];
+function projectChildrenInScope(run){return (run.children||[]).filter(c=>c.inScope!==false&&c.status!=='REMOVED');}
+function compareValue(actual,operator,expected){
+  if(actual==null||!Number.isFinite(Number(actual))||!Number.isFinite(Number(expected)))return false;
+  const a=Number(actual),b=Number(expected);
+  if(operator==='>')return a>b;if(operator==='<=')return a<=b;if(operator==='<')return a<b;if(operator==='==')return a===b;if(operator==='!=')return a!==b;
+  return a>=b;
+}
+function projectConditionResult(s,run,condition,at,children) {
+  const type=condition.type||'required',now=iso(at);
+  try {
+    if(type==='required') {
+      const required=children.filter(c=>c.required),resolved=required.filter(c=>PROJECT_CHILD_SATISFIED.includes(c.status)).length;
+      return {id:condition.id||'required',type,reached:resolved===required.length,actual:{resolved,total:required.length},error:null};
+    }
+    if(type==='count') {
+      const actual=children.filter(c=>c.status==='DONE').length,target=Math.max(0,Number(condition.value)||0);
+      return {id:condition.id||'count',type,reached:actual>=target,actual,target,error:null};
+    }
+    if(type==='percentage') {
+      const applicable=children.filter(c=>c.status!=='NOT_APPLICABLE'),resolved=applicable.filter(c=>['DONE','EXCUSED'].includes(c.status)).length;
+      const actual=applicable.length?resolved/applicable.length*100:100,target=Math.max(0,Number(condition.value)||0);
+      return {id:condition.id||'percentage',type,reached:actual>=target,actual,target,error:null};
+    }
+    if(type==='target') {
+      const period=s.periods.filter(p=>p.blockId===condition.targetBlockId&&p.start<=now&&p.end>run.startedAt).sort((a,b)=>a.start.localeCompare(b.start)).at(-1);
+      if(!period)return {id:condition.id||'target',type,reached:false,actual:null,error:'Target has no evaluated period yet.'};
+      const target=condition.value==null?Number(period.target)||0:Number(condition.value),operator=condition.operator||'>=',actual=Number(period.actual)||0;
+      return {id:condition.id||'target',type,reached:compareValue(actual,operator,target),actual,target,operator,periodId:period.id,error:null};
+    }
+    if(type==='result') {
+      const values=s.actionLogs.filter(l=>l.actionId===condition.actionId&&l.at>=run.startedAt&&l.at<=now).map(l=>l.results?.[condition.resultId])
+        .map(v=>Number(v?.value??v)).filter(Number.isFinite);
+      if(!values.length)return {id:condition.id||'result',type,reached:false,actual:null,error:null};
+      const aggregate=condition.aggregate||'latest';let actual=values.at(-1);
+      if(aggregate==='sum')actual=values.reduce((n,x)=>n+x,0);if(aggregate==='average')actual=values.reduce((n,x)=>n+x,0)/values.length;if(aggregate==='min')actual=Math.min(...values);if(aggregate==='max')actual=Math.max(...values);
+      const target=Number(condition.value),operator=condition.operator||'>=';
+      return {id:condition.id||'result',type,reached:compareValue(actual,operator,target),actual,target,operator,aggregate,error:null};
+    }
+    if(type==='manual')return {id:condition.id||'manual',type,reached:!!run.manualConditionSatisfied,actual:!!run.manualConditionSatisfied,error:null};
+    return {id:condition.id||'unknown',type,reached:false,actual:null,error:'Unknown condition.'};
+  } catch(error) {return {id:condition.id||type,type,reached:false,actual:null,error:error.message||String(error)};}
+}
+function projectCompletionConditions(run) {
+  const cfg=run.blockSnapshot?.config||{};
+  if(Array.isArray(cfg.conditions)&&cfg.conditions.length)return cfg.conditions;
+  const mode=cfg.completionMode||'required_only';
+  if(mode==='count')return [{id:'base-count',type:'count',value:Number(cfg.completionValue)||1}];
+  if(mode==='percentage')return [{id:'base-percentage',type:'percentage',value:Number(cfg.completionValue)||0}];
+  if(mode==='manual'||mode==='open_ended')return [{id:'base-manual',type:'manual'}];
+  return [{id:'base-required',type:'required'}];
+}
+function runProgress(run,s=null,at=Date.now()) {
+  const all=run.children||[],children=run.type==='project'?projectChildrenInScope(run):all,done=children.filter(x=>x.status==='DONE').length;
+  const required=children.filter(x=>x.required);
+  if(run.type==='project') {
+    const mandatory=children.filter(x=>x.required||x.milestone),mandatoryDone=mandatory.every(x=>PROJECT_CHILD_SATISFIED.includes(x.status));
+    const conditions=projectCompletionConditions(run),conditionResults=s?conditions.map(c=>projectConditionResult(s,run,c,at,children)):[];
+    const conditionMode=run.blockSnapshot?.config?.conditionMode||'all';
+    const conditionsReached=conditionResults.length?(conditionMode==='any'?conditionResults.some(x=>x.reached):conditionResults.every(x=>x.reached)):false;
+    const applicable=children.filter(c=>c.status!=='NOT_APPLICABLE'),resolved=applicable.filter(c=>['DONE','EXCUSED'].includes(c.status)).length;
+    return {done,total:children.length,required:mandatory.length,requiredDone:mandatoryDone,percentage:applicable.length?Math.min(100,resolved/applicable.length*100):100,
+      satisfied:mandatoryDone&&conditionsReached,mode:conditionMode,conditionMode,conditionResults};
+  }
+  const requiredDone=required.every(x=>x.status==='DONE'),config=run.blockSnapshot?.config||{},mode=config.completionMode||'required_only';
   let threshold=false;
   if(mode==='count')threshold=done>=Math.max(1,Number(config.completionValue)||1);
   else if(mode==='percentage')threshold=(children.length?done/children.length*100:100)>=Math.max(0,Number(config.completionValue)||0);
   else if(mode==='manual'||mode==='open_ended')threshold=false;
   else threshold=requiredDone;
-  return {done,total:children.length,required:required.length,requiredDone,
-    percentage:children.length?Math.min(100,done/children.length*100):100,
-    satisfied:requiredDone&&threshold,mode};
+  return {done,total:children.length,required:required.length,requiredDone,percentage:children.length?Math.min(100,done/children.length*100):100,satisfied:requiredDone&&threshold,mode};
 }
-function maybeFinishRun(s,run,at) {
+function maybeFinishRunfunction maybeFinishRun(s,run,at) {
   if(!isWorkingRun(run))return;
   if(run.type==='project')refreshProjectChildren(run,at);
-  const progress=runProgress(run),config=run.blockSnapshot?.config||{},policy=config.afterMinimum||'auto_finish';
-  run.completionPercentage=progress.percentage;
+  const progress=runProgress(run,s,at),config=run.blockSnapshot?.config||{},policy=config.afterMinimum||'auto_finish';
+  run.completionPercentage=progress.percentage;if(run.type==='project')run.conditionResults=copy(progress.conditionResults||[]);
   if(progress.satisfied&&!run.minimumReachedAt)run.minimumReachedAt=iso(at);
   if(run.type==='project') {
     if(progress.satisfied) {
@@ -274,7 +350,7 @@ function finishRun(s,run,at,manualSuccess=false) {
       if(nested.length>=Math.max(1,expected)&&nested.every(r=>r.status==='COMPLETED')){child.status='DONE';child.resolvedAt=iso(at);}
     }
   }
-  const progress=runProgress(run);run.completionPercentage=progress.percentage;
+  const progress=runProgress(run,s,at);run.completionPercentage=progress.percentage;if(run.type==='project')run.conditionResults=copy(progress.conditionResults||[]);
   run.status=manualSuccess||progress.satisfied?'COMPLETED':'MISSED';
   run.finishedAt=iso(at);record(s,`run_${run.status.toLowerCase()}`,{runId:run.id,blockId:run.blockId,completed:progress.done,required:progress.required},at);
 }
@@ -312,7 +388,7 @@ function reconcileProjects(s,at) {
     if(run.status!=='BLOCKED')maybeFinishRun(s,run,at);
     if(!run.deadlineAt||run.deadlineAt>when||run.status==='COMPLETED')continue;
     if(!run.overdueAt){run.overdueAt=run.deadlineAt;record(s,'project_overdue',{runId:run.id,blockId:run.blockId},run.deadlineAt);}
-    const cfg=run.blockSnapshot?.config||{},progress=runProgress(run);
+    const cfg=run.blockSnapshot?.config||{},progress=runProgress(run,s,at);
     if((cfg.deadlinePolicy||'continue_overdue')==='expire_unfinished'&&!progress.satisfied) {
       for(const child of run.children)if(['OPEN','LOCKED','BLOCKED'].includes(child.status)){child.status='MISSED';child.resolvedAt=run.deadlineAt;}
       run.status='EXPIRED';run.finishedAt=run.deadlineAt;
@@ -475,7 +551,7 @@ function reconcileActivations(s,at) {
   for(const activation of s.activations.filter(a=>a.status==='PAUSED'&&a.resumeAt&&a.resumeAt<=iso(at)))resumeActivation(s,activation,at);
 }
 export function reconcile(input,at) {
-  const s=copy(input);validate(s);reconcileActivations(s,at);reconcileRoutines(s,at);reconcileProjects(s,at);reconcileOccurrences(s,at);reconcilePeriods(s,at);reconcileAvoid(s,at);ensureCycles(s,at);return s;
+  const s=copy(input);validate(s);reconcileActivations(s,at);reconcileRoutines(s,at);reconcileOccurrences(s,at);reconcilePeriods(s,at);reconcileAvoid(s,at);reconcileProjects(s,at);ensureCycles(s,at);return s;
 }
 function eligibleActionContexts(s,actionId,at) {
   const when=iso(at),refs=[];
@@ -558,13 +634,13 @@ function addStarter(s,which,at) {
 }
 function dependencies(s,kind,target) {
   const refs=[];
-  if(kind==='actions')for(const b of s.blocks) {for(const r of b.relationships||[])if(r.kind==='Action'&&r.refId===target)refs.push(b.name);for(const e of b.entries||[])if(e.kind==='Action'&&e.refId===target)refs.push(b.name);}
+  if(kind==='actions')for(const b of s.blocks) {for(const r of b.relationships||[])if(r.kind==='Action'&&r.refId===target)refs.push(b.name);for(const e of b.entries||[])if(e.kind==='Action'&&e.refId===target)refs.push(b.name);if(b.type==='project'&&(b.config?.conditions||[]).some(c=>c.type==='result'&&c.actionId===target))refs.push(`${b.name} completion condition`);}
   if(kind==='actions'){
     if(s.occurrences.some(o=>o.itemSnapshot?.id===target&&['OPEN','OVERDUE','CARRIED'].includes(o.status)))refs.push('open occurrence');
     if(s.runs.some(run=>run.status==='IN_PROGRESS'&&run.children.some(c=>c.kind==='Action'&&c.refId===target&&c.status==='OPEN')))refs.push('active Run');
   }
   if(kind==='blocks'){
-    for(const b of s.blocks)for(const r of b.relationships||[])if(r.kind==='Block'&&r.refId===target)refs.push(b.name);
+    for(const b of s.blocks){for(const r of b.relationships||[])if(r.kind==='Block'&&r.refId===target)refs.push(b.name);if(b.type==='project'&&(b.config?.conditions||[]).some(c=>c.type==='target'&&c.targetBlockId===target))refs.push(`${b.name} completion condition`);}
     if(s.activations.some(a=>a.blockId===target&&a.status==='ACTIVE'))refs.push('active Block');
     if(s.runs.some(r=>r.blockId===target&&r.status==='IN_PROGRESS'))refs.push('active Run');
   }
@@ -724,7 +800,8 @@ export function execute(input,command,at) {
     }
     case 'RESOLVE_CHILD':{
       const run=byId(s,'runs',command.runId),child=run?.children.find(c=>c.id===command.childId);insist(child&&isWorkingRun(run)&&child.status==='OPEN','Open Run child not found.');
-      insist(['DONE','SKIPPED'].includes(command.status),'Invalid child outcome.');child.status=command.status;child.resolvedAt=iso(at);child.notes=command.notes||'';
+      const allowed=run.type==='project'?['DONE','SKIPPED','EXCUSED','NOT_APPLICABLE']:['DONE','SKIPPED'];
+      insist(allowed.includes(command.status),'Invalid child outcome.');child.status=command.status;child.resolvedAt=iso(at);child.notes=command.notes||'';
       advanceWorkflow(run,child,at);if(run.type==='project')refreshProjectChildren(run,at);maybeFinishRun(s,run,at);record(s,'run_child_resolved',{runId:run.id,childId:child.id,status:child.status},at);value=child;break;
     }
     case 'BLOCK_PROJECT_CHILD':{
@@ -763,8 +840,10 @@ export function execute(input,command,at) {
     case 'FINISH_RUN':{
       const run=byId(s,'runs',command.runId);insist(run,'Run not found.');
       if(run.type==='project') {
-        const progress=runProgress(run),manual=run.blockSnapshot?.config?.completionMode==='manual';
-        insist(isWorkingRun(run)&&(run.status==='READY_TO_FINISH'||progress.satisfied||manual),'Project is not ready to finish.');
+        const conditions=projectCompletionConditions(run),manual=conditions.some(c=>c.type==='manual');
+        if(manual&&!run.manualConditionSatisfied){run.manualConditionSatisfied=true;record(s,'project_manual_condition_satisfied',{runId:run.id,blockId:run.blockId},at);}
+        const progress=runProgress(run,s,at);run.conditionResults=copy(progress.conditionResults||[]);
+        insist(isWorkingRun(run)&&(run.status==='READY_TO_FINISH'||progress.satisfied),'Project is not ready to finish.');
       }
       finishRun(s,run,at,true);value=run;break;
     }

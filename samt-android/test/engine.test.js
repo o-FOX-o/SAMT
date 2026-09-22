@@ -249,4 +249,26 @@ hard=reconcile(hard,at('2026-07-06T09:31:00Z'));
 assert.equal(hard.runs.find(r=>r.blockId===hardProject.id).status,'EXPIRED','hard Project deadline can expire unfinished scope');
 assert.equal(hard.runs.find(r=>r.blockId===hardProject.id).children[0].status,'MISSED');
 
-console.log('PASS: snapshots, DST rollover, missed routines, Action/Todo distinction, shared contexts, Results, cycles, alarms, Avoid, Workflow, Project persistence/deadlines/dependencies, Target, pause/resume and data safety');
+
+let conditionState=emptyState();
+let cAdd=issue(conditionState,'ADD_DEFINITION','2026-07-07T09:00:00Z',{kind:'actions',data:{name:'Quality check',completion:{type:'quantity',target:1},resultFields:[{id:'quality',label:'Quality',type:'score',required:true,minimum:0,maximum:10}]}});conditionState=cAdd.state;const qualityAction=cAdd.value;
+cAdd=issue(conditionState,'ADD_DEFINITION','2026-07-07T09:00:00Z',{kind:'blocks',data:{name:'Condition Project',type:'project',config:{completionMode:'required_only',conditionMode:'all',conditions:[{id:'req',type:'required'},{id:'score',type:'result',actionId:qualityAction.id,resultId:'quality',operator:'>=',value:8,aggregate:'latest'}],finishBehavior:'ready_to_finish'}}});conditionState=cAdd.state;const conditionProject=cAdd.value;
+conditionState=issue(conditionState,'ADD_RELATIONSHIP','2026-07-07T09:00:00Z',{blockId:conditionProject.id,kind:'Action',refId:qualityAction.id,required:true}).state;
+conditionState=issue(conditionState,'ACTIVATE','2026-07-07T09:00:00Z',{blockId:conditionProject.id}).state;let conditionRun=conditionState.runs.find(r=>r.blockId===conditionProject.id);
+conditionState=issue(conditionState,'LOG_ACTION','2026-07-07T09:05:00Z',{actionId:qualityAction.id,quantity:1,results:{quality:7}}).state;conditionRun=conditionState.runs.find(r=>r.id===conditionRun.id);
+assert.equal(conditionRun.status,'IN_PROGRESS','required work alone does not bypass a Result condition');
+assert.equal(conditionRun.conditionResults.find(x=>x.id==='score').actual,7);
+conditionState=issue(conditionState,'LOG_ACTION','2026-07-07T09:06:00Z',{actionId:qualityAction.id,quantity:1,results:{quality:9}}).state;conditionRun=conditionState.runs.find(r=>r.id===conditionRun.id);
+assert.equal(conditionRun.status,'READY_TO_FINISH','ALL Project conditions can become ready without auto-finishing');
+assert.equal(conditionRun.conditionResults.find(x=>x.id==='score').reached,true);
+
+let resolution=emptyState();
+cAdd=issue(resolution,'ADD_DEFINITION','2026-07-09T09:00:00Z',{kind:'actions',data:{name:'Optional evidence',completion:{type:'quantity',target:1}}});resolution=cAdd.state;const evidence=cAdd.value;
+cAdd=issue(resolution,'ADD_DEFINITION','2026-07-09T09:00:00Z',{kind:'blocks',data:{name:'Resolution Project',type:'project',config:{completionMode:'required_only',finishBehavior:'ready_to_finish'}}});resolution=cAdd.state;const resolutionProject=cAdd.value;
+resolution=issue(resolution,'ADD_RELATIONSHIP','2026-07-09T09:00:00Z',{blockId:resolutionProject.id,kind:'Action',refId:evidence.id,required:true,config:{milestone:true}}).state;
+resolution=issue(resolution,'ACTIVATE','2026-07-09T09:00:00Z',{blockId:resolutionProject.id}).state;let resolutionRun=resolution.runs.find(r=>r.blockId===resolutionProject.id),resolutionChild=resolutionRun.children[0];
+resolution=issue(resolution,'RESOLVE_CHILD','2026-07-09T09:05:00Z',{runId:resolutionRun.id,childId:resolutionChild.id,status:'EXCUSED',notes:'Waived with reason'}).state;resolutionRun=resolution.runs.find(r=>r.id===resolutionRun.id);
+assert.equal(resolutionRun.children[0].status,'EXCUSED');
+assert.equal(resolutionRun.status,'READY_TO_FINISH','excused required work remains distinct but can satisfy mandatory scope');
+
+console.log('PASS: snapshots, DST rollover, missed routines, Action/Todo distinction, shared contexts, Results, cycles, alarms, Avoid, Workflow, Project conditions/deadlines/dependencies, Target, pause/resume and data safety');
