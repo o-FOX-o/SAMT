@@ -2,7 +2,7 @@ plugins {
     id 'com.android.application'
 }
 
-def previewBuild = (System.getenv('GITHUB_RUN_NUMBER') ?: '1').toInteger()
+def previewBuild = (System.getenv('SAMT_BUILD_NUMBER') ?: '101').toInteger()
 
 android {
     namespace 'app.samt.android'
