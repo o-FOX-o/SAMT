@@ -70,10 +70,29 @@ async function connect(){
   assert.equal(await evaluate(`document.querySelector('[data-block-types="collection action_list"]').hidden`),false);
   await evaluate(`document.querySelector('.modal [data-action=close-modal]').click()`);
 
+  await evaluate('document.querySelector(".bottom [data-route=settings]").click()');
+  await evaluate('document.querySelector("[data-settings=data]").click()');
+  await until(`document.querySelector('.card h2')?.textContent === 'Backups'`);
+  assert.equal(await evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1'),true,'Settings must not overflow on mobile');
+  await evaluate(`const f=document.querySelector('form[data-form=manager-filter]');f.elements.query.value='Dhuhr';f.elements.type.value='actions';f.requestSubmit()`);
+  await until(`document.querySelectorAll('[data-manager-select]').length === 1`);
+  await evaluate(`document.querySelector('[data-manager-select]').click()`);
+  await until(`document.querySelector('[data-action=manager-bulk][data-op=archive]') !== null`);
+  await evaluate(`document.querySelector('[data-action=manager-bulk][data-op=archive]').click()`);
+  await until(`document.querySelector('.modal h2')?.textContent === 'Archive 1 item?'`);
+  await evaluate(`document.querySelector('.modal [data-action=close-modal]').click()`);
+  await evaluate(`document.querySelector('[data-action=paste-backup]').click()`);
+  await until(`document.querySelector('.modal h2')?.textContent === 'Paste a SAMT backup'`);
+  await evaluate(`document.querySelector('.modal [data-action=close-modal]').click()`);
+  await evaluate(`document.querySelector('[data-action=open-clear-data]').click()`);
+  await until(`document.querySelector('.modal h2')?.textContent === 'Clear selected tracked data'`);
+  await evaluate(`document.querySelector('.modal [data-action=close-modal]').click()`);
+  await capture('ui-data.png');
+
   await evaluate('document.querySelector("[data-action=theme]").click()');
   await evaluate('document.querySelector("[data-action=theme]").click()');
   await until('document.documentElement.dataset.theme === "dark"');
   await capture('ui-dark.png');
   socket.close();
-  console.log('PASS: mobile Today, editable prayer starter, active Runs, and Dark mode');
+  console.log('PASS: mobile Today, prayer starter, active Runs, Data Manager, backup import, and Dark mode');
 })().catch(e=>{console.error(e);process.exitCode=1;});

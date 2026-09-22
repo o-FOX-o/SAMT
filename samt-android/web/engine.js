@@ -268,7 +268,7 @@ function reconcileOccurrences(s,at,horizonDays=14) {
   for(const block of s.blocks.filter(b=>b.type==='action_list'&&b.status!=='ARCHIVED'&&s.activations.some(a=>a.blockId===b.id&&a.status==='ACTIVE'))) {
     const activation=s.activations.find(a=>a.blockId===block.id&&a.status==='ACTIVE');
     for(const entry of block.entries||[]) {
-      const earliest=[entry.activeFrom,entry.createdAt,activation?.startedAt].filter(Boolean).map(x=>localKey(x,zone)).sort().at(-1)||today;
+      const earliest=[entry.activeFrom,entry.createdAt,activation?.startedAt,s.meta?.occurrenceFloorAt].filter(Boolean).map(x=>localKey(x,zone)).sort().at(-1)||today;
       const last=s.occurrences.filter(o=>o.entryId===entry.id).sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).at(-1);
       const from=last?dayShift(localKey(last.dueAt,zone),-1):earliest;
       const minDay=dayShift(today,-739);
@@ -476,6 +476,52 @@ function dependencies(s,kind,target) {
   if(kind==='units')for(const a of s.actions)if((a.resultFields||[]).some(r=>r.unitId===target))refs.push(a.name);
   return refs;
 }
+export function definitionImpact(s,kind,target) {
+  const d=byId(s,kind,target);if(!d)return {references:[],historyCount:0,logs:0,runs:0,occurrences:0,periods:0};
+  let logs=0,runs=0,occurrences=0,periods=0;
+  if(kind==='actions') {
+    logs=s.actionLogs.filter(x=>x.actionId===target).length;
+    runs=s.runs.filter(x=>x.children?.some(c=>c.kind==='Action'&&c.refId===target)).length;
+    occurrences=s.occurrences.filter(x=>x.itemSnapshot?.id===target).length;
+    periods=s.periods.filter(x=>x.actionId===target).length;
+  } else if(kind==='blocks') {
+    runs=s.runs.filter(x=>x.blockId===target||x.children?.some(c=>c.kind==='Block'&&c.refId===target)).length;
+    occurrences=s.occurrences.filter(x=>x.blockId===target).length;
+    periods=s.periods.filter(x=>x.blockId===target).length;
+  } else if(kind==='tags') {
+    logs=s.actionLogs.filter(x=>(x.actionSnapshot?.tagIds||[]).includes(target)).length;
+    runs=s.runs.filter(x=>x.children?.some(c=>(c.definitionSnapshot?.tagIds||[]).includes(target))).length;
+  } else if(kind==='units') {
+    logs=s.actionLogs.filter(x=>(x.resultSnapshots||[]).some(r=>r.unitId===target)||Object.values(x.results||{}).some(v=>v?.unitId===target)).length;
+    runs=s.runs.filter(x=>x.children?.some(c=>(c.definitionSnapshot?.resultFields||[]).some(r=>r.unitId===target))).length;
+  } else if(kind==='categories') {
+    const tagIds=new Set(s.tags.filter(t=>t.categoryId===target).map(t=>t.id));
+    logs=s.actionLogs.filter(x=>(x.actionSnapshot?.tagIds||[]).some(t=>tagIds.has(t))).length;
+    runs=s.runs.filter(x=>x.children?.some(c=>(c.definitionSnapshot?.tagIds||[]).some(t=>tagIds.has(t)))).length;
+  }
+  return {references:[...new Set(dependencies(s,kind,target))],logs,runs,occurrences,periods,historyCount:logs+runs+occurrences+periods};
+}
+const clearCollections={actionLogs:'actionLogs',runs:'runs',occurrences:'occurrences',periods:'periods',cycles:'cycles',reviews:'reviews',history:'history'};
+function recordInstant(key,record) {
+  if(key==='actionLogs'||key==='reviews'||key==='history')return record.at;
+  if(key==='runs')return record.startedAt||record.finishedAt;
+  if(key==='occurrences')return record.dueAt||record.createdAt;
+  if(key==='periods')return record.start||record.closedAt;
+  if(key==='cycles')return record.createdAt;
+  return null;
+}
+function clearMatches(key,record,options) {
+  if(options.dateMode!=='before'||!options.cutoff)return true;
+  const instant=recordInstant(key,record);return instant?instant<options.cutoff:false;
+}
+export function dataClearImpact(s,options={}) {
+  const selected=new Set(options.categories||[]),counts={};let total=0;
+  for(const [category,key] of Object.entries(clearCollections))if(selected.has(category)) {
+    counts[category]=s[key].filter(x=>clearMatches(category,x,options)).length;total+=counts[category];
+  }
+  if(selected.has('settings')){counts.settings=1;total++;}
+  return {counts,total,affectsTargets:(counts.actionLogs||0)>0,affectsRunHistory:(counts.runs||0)>0,affectsAnalysis:(counts.actionLogs||0)>0};
+}
 function addRestorePoint(s,reason,at) {
   const snapshot=copy(s);snapshot.restorePoints=[];
   const point={id:id('restore'),at:iso(at),reason,state:snapshot};s.restorePoints.push(point);return point;
@@ -598,6 +644,30 @@ export function execute(input,command,at) {
     }
     case 'ADD_REVIEW':value={id:id('review'),at:iso(at),period:command.period||'week',notes:String(command.notes||''),highlights:String(command.highlights||''),next:String(command.next||'')};s.reviews.push(value);record(s,'review_saved',{reviewId:value.id},at);break;
     case 'SET_SETTINGS':s.settings={...s.settings,...copy(command.changes)};record(s,'settings_changed',{keys:Object.keys(command.changes)},at);break;
+    case 'CLEAR_DATA':{
+      const options={categories:copy(command.categories||[]),dateMode:command.dateMode||'all',cutoff:command.cutoff?iso(command.cutoff):null};
+      const impact=dataClearImpact(s,options);insist(impact.total>0,'No matching data to clear.');addRestorePoint(s,'before clearing selected data',at);
+      const selected=new Set(options.categories);
+      if(selected.has('actionLogs')) {
+        const removed=new Set(s.actionLogs.filter(x=>clearMatches('actionLogs',x,options)).map(x=>x.id));
+        s.actionLogs=s.actionLogs.filter(x=>!removed.has(x.id));
+        for(const o of s.occurrences)if(removed.has(o.actionLogId))o.actionLogId=null;
+        for(const run of s.runs)for(const child of run.children||[]) {
+          child.actionLogIds=(child.actionLogIds||[]).filter(x=>!removed.has(x));
+          if(removed.has(child.actionLogId))child.actionLogId=child.actionLogIds.at(-1)||null;
+        }
+      }
+      for(const category of ['runs','occurrences','periods','cycles','reviews','history'])if(selected.has(category))
+        s[clearCollections[category]]=s[clearCollections[category]].filter(x=>!clearMatches(category,x,options));
+      if(selected.has('runs'))for(const activation of s.activations.filter(x=>x.status==='ACTIVE'))
+        if(!s.runs.some(r=>r.activationId===activation.id&&r.status==='IN_PROGRESS'))activation.startedAt=iso(at);
+      if(selected.has('occurrences')) {
+        const floor=options.dateMode==='before'&&options.cutoff?options.cutoff:iso(at);
+        if(!s.meta.occurrenceFloorAt||s.meta.occurrenceFloorAt<floor)s.meta.occurrenceFloorAt=floor;
+      }
+      if(selected.has('settings'))s.settings=copy(emptyState().settings);
+      record(s,'data_cleared',{counts:impact.counts,dateMode:options.dateMode,cutoff:options.cutoff},at);value=impact;break;
+    }
     case 'ARCHIVE':{
       const d=byId(s,command.kind,command.id);insist(d,'Definition not found.');d.status='ARCHIVED';d.updatedAt=iso(at);
       if(command.kind==='blocks'){
@@ -606,19 +676,59 @@ export function execute(input,command,at) {
       }
       record(s,'definition_archived',{kind:command.kind,definitionId:d.id},at);value=d;break;
     }
+    case 'UNARCHIVE':{
+      const d=byId(s,command.kind,command.id);insist(d,'Definition not found.');d.status='ACTIVE';d.updatedAt=iso(at);
+      record(s,'definition_unarchived',{kind:command.kind,definitionId:d.id},at);value=d;break;
+    }
+    case 'BULK_ARCHIVE':case 'BULK_UNARCHIVE':{
+      const items=copy(command.items||[]);insist(items.length&&items.length<=500,'Choose between 1 and 500 definitions.');
+      const defs=items.map(item=>{insist(['categories','tags','units','actions','blocks'].includes(item.kind),'Invalid definition type.');const d=byId(s,item.kind,item.id);insist(d,'Definition not found.');return {...item,d};});
+      const archived=command.type==='BULK_ARCHIVE';
+      for(const {kind,d} of defs) {
+        d.status=archived?'ARCHIVED':'ACTIVE';d.updatedAt=iso(at);
+        if(archived&&kind==='blocks') {
+          const activation=s.activations.find(x=>x.blockId===d.id&&x.status==='ACTIVE');if(activation)activation.status='INACTIVE';
+          for(const run of s.runs.filter(x=>x.blockId===d.id&&x.status==='IN_PROGRESS'))finishRun(s,run,at);
+        }
+        record(s,archived?'definition_archived':'definition_unarchived',{kind,definitionId:d.id},at);
+      }
+      value=defs.map(x=>x.d);break;
+    }
     case 'BIN':{
       const d=byId(s,command.kind,command.id);insist(d,'Definition not found.');const dep=dependencies(s,command.kind,d.id);
       insist(!dep.length,`Used by: ${dep.join(', ')}`);
       s[command.kind]=s[command.kind].filter(x=>x.id!==d.id);const item={id:id('bin'),kind:command.kind,originalId:d.id,snapshot:copy(d),deletedAt:iso(at)};
       s.bin.push(item);record(s,'definition_binned',{kind:command.kind,definitionId:d.id,binId:item.id},at);value=item;break;
     }
+    case 'BULK_BIN':{
+      const items=copy(command.items||[]);insist(items.length&&items.length<=500,'Choose between 1 and 500 definitions.');
+      const defs=items.map(item=>{insist(['categories','tags','units','actions','blocks'].includes(item.kind),'Invalid definition type.');const d=byId(s,item.kind,item.id);insist(d,'Definition not found.');return {...item,d,refs:dependencies(s,item.kind,item.id)};});
+      const blocked=defs.filter(x=>x.refs.length);insist(!blocked.length,`Still used: ${blocked.map(x=>`${x.d.name} (${x.refs.join(', ')})`).join('; ')}`);
+      value=[];for(const {kind,d} of defs) {
+        s[kind]=s[kind].filter(x=>x.id!==d.id);const item={id:id('bin'),kind,originalId:d.id,snapshot:copy(d),deletedAt:iso(at)};
+        s.bin.push(item);record(s,'definition_binned',{kind,definitionId:d.id,binId:item.id},at);value.push(item);
+      }
+      break;
+    }
     case 'RESTORE':{
       const item=byId(s,'bin',command.binId);insist(item,'Bin item not found.');insist(!byId(s,item.kind,item.originalId),'Cannot restore conflicting ID.');
       s[item.kind].push(copy(item.snapshot));s.bin=s.bin.filter(x=>x.id!==item.id);record(s,'definition_restored',{kind:item.kind,definitionId:item.originalId},at);value=item.snapshot;break;
     }
+    case 'BULK_RESTORE':{
+      const ids=new Set(command.binIds||[]),items=s.bin.filter(x=>ids.has(x.id));insist(items.length===ids.size&&items.length,'Bin selection is no longer available.');
+      for(const item of items)insist(!byId(s,item.kind,item.originalId),`Cannot restore ${item.snapshot.name}: its stable ID is already in use.`);
+      for(const item of items){s[item.kind].push(copy(item.snapshot));record(s,'definition_restored',{kind:item.kind,definitionId:item.originalId},at);}
+      s.bin=s.bin.filter(x=>!ids.has(x.id));value=items.map(x=>x.snapshot);break;
+    }
     case 'PERMANENT_DELETE':{
       const item=byId(s,'bin',command.binId);insist(item,'Bin item not found.');addRestorePoint(s,`before permanently deleting ${item.snapshot.name}`,at);s.bin=s.bin.filter(x=>x.id!==item.id);
       record(s,'definition_deleted',{kind:item.kind,definitionId:item.originalId,displayName:item.snapshot.name},at);break;
+    }
+    case 'BULK_PERMANENT_DELETE':{
+      const ids=new Set(command.binIds||[]),items=s.bin.filter(x=>ids.has(x.id));insist(items.length===ids.size&&items.length,'Bin selection is no longer available.');
+      addRestorePoint(s,`before permanently deleting ${items.length} Bin items`,at);
+      for(const item of items)record(s,'definition_deleted',{kind:item.kind,definitionId:item.originalId,displayName:item.snapshot.name},at);
+      s.bin=s.bin.filter(x=>!ids.has(x.id));value=items.length;break;
     }
     case 'EMPTY_BIN':{
       if(s.bin.length)addRestorePoint(s,'before emptying Bin',at);

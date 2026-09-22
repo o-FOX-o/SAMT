@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {emptyState,execute,reconcile,periodBounds,home,overview,backup,importBackup,validate,alarmRequests} from '../web/engine.js';
+import {emptyState,execute,reconcile,periodBounds,home,overview,backup,importBackup,validate,alarmRequests,definitionImpact,dataClearImpact} from '../web/engine.js';
 
 const at=(s)=>Date.parse(s);
 const issue=(state,type,when,other={})=>execute(state,{type,...other},at(when));
@@ -188,4 +188,22 @@ assert.equal(safety.bin.length,1);
 safety=issue(safety,'EMPTY_BIN','2026-07-03T08:02:00Z').state;
 assert.equal(safety.bin.length,0);assert.equal(safety.restorePoints.length,1,'permanent emptying creates a restore point');
 assert.equal(safety.restorePoints[0].state.bin.length,1,'restore point preserves the Bin before emptying');
+
+let manager=emptyState();
+add=issue(manager,'ADD_DEFINITION','2026-07-04T08:00:00Z',{kind:'categories',data:{name:'Cleanup'}});manager=add.state;const cleanupCategory=add.value;
+add=issue(manager,'ADD_DEFINITION','2026-07-04T08:01:00Z',{kind:'tags',data:{name:'Unused Tag',categoryId:cleanupCategory.id}});manager=add.state;const cleanupTag=add.value;
+const untouched=JSON.stringify(manager);
+assert.throws(()=>issue(manager,'BULK_BIN','2026-07-04T08:02:00Z',{items:[{kind:'categories',id:cleanupCategory.id},{kind:'tags',id:cleanupTag.id}]}),/Still used/);
+assert.equal(JSON.stringify(manager),untouched,'blocked bulk deletion is atomic');
+manager=issue(manager,'BULK_ARCHIVE','2026-07-04T08:03:00Z',{items:[{kind:'tags',id:cleanupTag.id}]}).state;
+assert.equal(manager.tags[0].status,'ARCHIVED');
+manager=issue(manager,'BULK_UNARCHIVE','2026-07-04T08:04:00Z',{items:[{kind:'tags',id:cleanupTag.id}]}).state;
+assert.equal(manager.tags[0].status,'ACTIVE');
+add=issue(manager,'ADD_DEFINITION','2026-07-04T08:05:00Z',{kind:'actions',data:{name:'Temporary Log',completion:{type:'quantity',target:1}}});manager=add.state;const cleanupAction=add.value;
+manager=issue(manager,'LOG_ACTION','2026-07-04T08:06:00Z',{actionId:cleanupAction.id,quantity:1}).state;
+assert.equal(definitionImpact(manager,'actions',cleanupAction.id).logs,1);
+assert.equal(dataClearImpact(manager,{categories:['actionLogs'],dateMode:'all'}).total,1);
+manager=issue(manager,'CLEAR_DATA','2026-07-04T08:07:00Z',{categories:['actionLogs'],dateMode:'all'}).state;
+assert.equal(manager.actionLogs.length,0);assert.equal(manager.restorePoints.length,1);
+assert.equal(manager.restorePoints[0].state.actionLogs.length,1,'selective clear is recoverable');
 console.log('PASS: snapshots, DST rollover, missed routines, Action/Todo distinction, shared contexts, Results, cycles, alarms, Avoid, Workflow, Target, pause/resume and data safety');

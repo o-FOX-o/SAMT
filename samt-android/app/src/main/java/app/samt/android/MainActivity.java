@@ -86,7 +86,8 @@ public class MainActivity extends Activity {
     }
     public class PhoneBridge {
         @JavascriptInterface public String version() {
-            return BuildConfig.VERSION_NAME;
+            try { return getPackageManager().getPackageInfo(getPackageName(),0).versionName; }
+            catch(Exception ignored) { return "preview"; }
         }
         @JavascriptInterface public String loadState() {
             return getSharedPreferences("samt",MODE_PRIVATE).getString("state","");
