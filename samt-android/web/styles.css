@@ -348,7 +348,7 @@ html[data-theme=neon] .style-preview-card{border-color:color-mix(in srgb,var(--a
 
 /* A phone held sideways is still a phone. Width-only breakpoints were causing
    SAMT to suddenly grow a desktop sidebar in landscape. */
-@media (max-height:600px) and (pointer:coarse){
+@media (orientation:landscape) and (max-height:600px) and (max-width:1100px){
  .side{display:none!important}
  .shell{display:block;max-width:none}
  .main{padding:env(safe-area-inset-top) 17px calc(82px + env(safe-area-inset-bottom));width:100%;max-width:none!important}
