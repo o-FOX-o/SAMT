@@ -56,7 +56,12 @@ survives app restart, appears in backup/import and has a relevant test.
 
 - New colour-based phone interface: Today, Actions/Build, Blocks, Log,
   Reviews, Analysis, History, Capacity and Settings/Data Manager.
-- System, Light and Dark themes; semantic and user-editable accent colours.
+- Visual presentation has four independent axes: five layouts (Simple, Orbit,
+  Command, Journal, Matrix); Follow-phone/Light/Dark/Neon appearance; reusable
+  built-in or custom colour palettes; and five writing/typography styles.
+  Categories have no compulsory semantic colour mapping. Generated foreground
+  and background tokens are contrast-checked, and visual/style presets can be
+  exported/imported separately from factual SAMT data.
 - Home surfaces Now, Due, Avoid, Today, Week, Project and Upcoming without
   mutating runtime just because it rendered.
 - Android notifications and exact alarms work when the app is closed (subject
@@ -81,15 +86,20 @@ survives app restart, appears in backup/import and has a relevant test.
 9. Backup/import round trip retains positions, Runs, Occurrences, Logs,
    Results, Bin, settings and theme; invalid import changes nothing.
 10. Alarm/notification fires with the app closed and is rescheduled on reboot.
+11. All five layouts render on a phone viewport; Light/Dark/Neon derive from the
+    same palette with readable text; style preset round-trip changes presentation
+    without replacing Actions, Blocks, Runs, Logs or History.
 
 
-## 0.2.101 verification notes
+## Current verification notes
 
 The automated contract now includes regression coverage for blank deadlines,
 timezone regeneration, archive cancellation, nested Routine activation,
 same-day pause/resume, paused Target intervals, explicit Missed logs, discrete
 Result values, multi-Result Target totals, relationship completion overrides,
-Project conditions/scope and data safety.
+Project conditions/scope, data safety, five-layout rendering, palette switching,
+contrast-safe appearance derivation, legacy accent migration and style-preset
+round trips.
 
 The Android client also exposes alarm permission state, scheduled-alarm count,
 next alarm, upcoming reminders and a ten-second test alarm. Closed-app
