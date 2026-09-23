@@ -459,7 +459,7 @@ async function importFile(file){try{applyIncoming(await file.text());}catch(e){s
 window.SamtReceiveImport=text=>{try{applyIncoming(text);}catch(e){show(`Import cancelled: ${e.message}`,'bad');}};
 const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.hidden=true;input.addEventListener('change',()=>{if(input.files?.[0])importFile(input.files[0]);input.value='';});document.body.appendChild(input);
 root.addEventListener('click',e=>{const node=e.target.closest('[data-route],[data-action],[data-filter],[data-activity],[data-settings]');if(!node)return;
- if(node.dataset.stop)return;if(node.dataset.route){navigate(node.dataset.route);return;}
+ if(node.dataset.stop)return;if(node.dataset.route){if(node.dataset.route==='settings'){settingsTab='style';stylePanel='overview';}navigate(node.dataset.route);return;}
  if(node.dataset.filter){tab=node.dataset.filter;render();return;}if(node.dataset.activity){activityTab=node.dataset.activity;render();return;}if(node.dataset.settings){settingsTab=node.dataset.settings;if(settingsTab==='style')stylePanel='overview';render();return;}
  const a=node.dataset.action,id=node.dataset.id;
  if(a==='close-modal'){closeEditorModal();return;}if(a==='theme'){const modes=['system','light','dark','neon'],current=state.settings.appearance||'system',next=modes[(modes.indexOf(current)+1)%modes.length];command('SET_SETTINGS',{changes:{appearance:next}});show(`Appearance: ${title(next)}`);return;}
