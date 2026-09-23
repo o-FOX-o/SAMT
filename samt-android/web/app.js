@@ -14,7 +14,7 @@ const iconPath={home:'<path d="m3 10 9-7 9 7v10H3z"/><path d="M9 20v-6h6v6"/>',a
 const navIcon=key=>`<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${iconPath[key]}</svg>`;
 const icons={collection:'▤',action_list:'☑',routine:'↻',workflow:'⇢',project:'◇',cycle:'◉',target:'◎'};
 const colors={collection:'var(--type-collection)',action_list:'var(--type-action-list)',routine:'var(--type-routine)',workflow:'var(--type-workflow)',project:'var(--type-project)',cycle:'var(--type-cycle)',target:'var(--type-target)'};
-let state,recovery=null,route='home',detail=null,modal=null,toast=null,tab='all',activityTab='history',settingsTab='style',draftResults=[],actionReturn=null,temporary=false;
+let state,recovery=null,route='home',detail=null,modal=null,toast=null,tab='all',activityTab='history',settingsTab='style',stylePanel='overview',draftResults=[],actionReturn=null,temporary=false;
 let dataFilter={query:'',type:'all',status:'all',usage:'all'},dataSelected=new Set(),binFilter={query:'',type:'all'},binSelected=new Set();
 try{const native=window.SamtAndroid?.loadState?.();const raw=native||localStorage.getItem(KEY);state=raw?JSON.parse(raw):emptyState();validate(state);}catch(e){recovery=e;state=emptyState();}
 function persist(){try{localStorage.setItem(KEY,JSON.stringify(state));temporary=false;}catch(e){temporary=true;show('Storage unavailable: export a backup before closing.','bad');}}
@@ -140,15 +140,83 @@ function activityPage(){const t=activityTab,stats=overview(state);return `<div c
  t==='reviews'?`<div class="stack"><div class="section"><h2>Reviews</h2>${btn('+ Review','new-review','','primary')}</div>${state.reviews.slice().reverse().map(x=>`<div class="card"><div class="small muted">${H(short(x.at))} · ${H(x.period)}</div><h2>${H(x.highlights||'Reflection')}</h2><p>${H(x.notes)}</p><strong>Next: ${H(x.next)}</strong></div>`).join('')||empty('No reviews yet','new-review')}</div>`:
  `<div class="card"><h2>Capacity</h2><p>Planning guidance only. Your history records what you actually did.</p><div class="stat-number">${H(state.settings.capacityHours)} h</div><div class="stat-label">Hours planned per week</div>${btn('Adjust in Settings','go-settings')}</div>`}</div>`;}
 function paletteSwatches(p){return `<span class="swatches"><i style="--sw:${H(p.primary)}"></i><i style="--sw:${H(p.secondary)}"></i><i style="--sw:${H(p.accent)}"></i><i style="--sw:${H(p.neutral)}"></i></span>`;}
-function settingsStyle(){
- const visual=currentVisual(),p=visual.palette,categoryColors=state.settings.categoryColors||{};
- const layouts=LAYOUTS.map(x=>`<button type="button" class="layout-choice ${visual.layout===x.id?'active':''}" data-action="set-layout" data-id="${H(x.id)}"><span class="layout-mini mini-${H(x.id)}"><i></i><i></i><i></i><i></i></span><strong>${H(x.name)}</strong><small>${H(x.description)}</small></button>`).join('');
- const palettes=Object.entries(PALETTES).map(([id,palette])=>`<button type="button" class="palette-choice ${visual.paletteId===id?'active':''}" data-action="set-palette" data-id="${H(id)}">${paletteSwatches(palette)}<span><strong>${H(palette.name)}</strong><small>${H(palette.description)}</small></span></button>`).join('');
- const full=Object.entries(FULL_PRESETS).map(([id,preset])=>`<article class="preset-card"><strong>${H(preset.name)}</strong><small>${H(title(preset.layout))} · ${H(title(preset.appearance))} · ${H(title(preset.typography))} · ${H(PALETTES[preset.paletteId].name)}</small>${paletteSwatches(PALETTES[preset.paletteId])}<div class="actions">${btn('Apply','full-preset',`data-id="${H(id)}"`,'tiny primary')}${btn('Export','export-full-preset',`data-id="${H(id)}"`,'tiny')}</div></article>`).join('');
- const cats=state.categories.map(cat=>{const color=categoryColors[cat.id]||p.primary,use=!!categoryColors[cat.id];return `<div class="category-colour"><label><input type="checkbox" name="catuse_${H(cat.id)}" ${use?'checked':''}> ${H(cat.name)}</label><input type="color" name="cat_${H(cat.id)}" value="${H(color)}"><small>${use?'Custom':'Palette / neutral styling'}</small></div>`;}).join('');
- return `<div class="style-studio stack"><section class="card style-intro"><div><div class="eyebrow">Visual system</div><h2>Make SAMT yours</h2><p>Layout, appearance, colour and writing style are independent. Light, Dark and Neon are generated from the same palette with contrast-safe text.</p></div><div class="style-current"><span>${H(title(visual.layout))}</span><span>${H(title(theme()))}</span><span>${H(PALETTES[visual.paletteId]?.name||visual.palette.name||'Custom')}</span><span>${H(title(visual.typography))}</span></div></section><section><div class="section"><div><h2>Layout</h2><span class="small muted">Five structures, not five recolours.</span></div></div><div class="layout-gallery">${layouts}</div></section><section><div class="section"><div><h2>Ready presets</h2><span class="small muted">Complete downloadable looks.</span></div><div class="actions">${btn('Export current','export-style')}${btn('Import preset','import-style')}</div></div><div class="preset-grid">${full}</div></section><section><div class="section"><h2>Colour library</h2></div><div class="palette-grid">${palettes}</div></section><form class="card" data-form="style-settings"><div class="card-heading"><div><h2>Fine tune</h2><p class="small">Editing a built-in palette creates a custom palette without changing the original.</p></div></div><div class="form-grid">${select('Appearance','appearance',[['system','Follow phone'],['light','Light'],['dark','Dark'],['neon','Neon']],state.settings.appearance||'system')}${select('Writing style','typography',TYPOGRAPHIES.map(x=>[x.id,x.name]),visual.typography)}${select('Density','density',[['compact','Compact'],['comfortable','Comfortable'],['spacious','Spacious']],visual.density||'comfortable')}${select('Motion','motion',[['off','Off'],['subtle','Subtle'],['expressive','Expressive']],visual.motion||'subtle')}</div>${field('Preset name','presetName',visual.presetName||'My SAMT style','text','Used when you export this visual preset.')}<div class="separator"></div><h3>Current palette</h3><input type="hidden" name="paletteId" value="${H(visual.paletteId)}"><div class="colour-editor">${[['Primary','primary'],['Secondary','secondary'],['Accent','accent'],['Neutral','neutral'],['Success','success'],['Warning','warning'],['Danger','danger']].map(([label,key])=>field(label,key,p[key],'color')).join('')}</div>${state.categories.length?`<div class="separator"></div><h3>Category colours</h3><p class="small">Categories have no forced meaning-to-colour mapping. Leave a category unchecked to let the current visual system style it neutrally.</p><div class="category-colours">${cats}</div>`:''}<button class="btn primary" type="submit">Save visual style</button></form></div>`;
+function layoutPreview(id){
+ if(id==='simple')return `<span class="layout-preview preview-simple"><i class="pv-title"></i><i></i><i></i><i></i><i></i></span>`;
+ if(id==='command')return `<span class="layout-preview preview-command"><i></i><i></i><i></i><i></i><i></i><i></i></span>`;
+ if(id==='journal')return `<span class="layout-preview preview-journal"><b></b><i></i><b></b><i></i><b></b><i></i></span>`;
+ if(id==='matrix')return `<span class="layout-preview preview-matrix"><i></i><i></i><i></i><i></i><i></i></span>`;
+ return `<span class="layout-preview preview-orbit"><b><em></em></b><i></i><i></i><i></i></span>`;
 }
-function settingsGeneral(){const defaults=state.settings.defaults||{};return `<div class="cols"><div class="card"><h2>Calendar & behaviour</h2><p class="small">Calendar choices control future boundaries without rewriting history.</p><form data-form="settings">${select('Week begins','weekStartsOn',[[1,'Monday'],[0,'Sunday']],state.settings.weekStartsOn)}${field('Timezone','timezone',state.settings.timezone,'text','Daily Runs close at local midnight.')}${field('Planned weekly capacity (hours)','capacityHours',state.settings.capacityHours,'number')}<div class="separator"></div><h3>Default behaviour</h3>${select('New Action List items','actionListUnfinished',[['expire','Become Missed at deadline'],['stay_overdue','Stay overdue'],['carry_forward','Carry forward']],defaults.actionListUnfinished||'expire')}${select('Missed Cycle item','cycleMissed',[['keep_position','Keep it next'],['skip_to_next','Move to next'],['restart','Restart cycle']],defaults.cycleMissed||'keep_position')}<button class="btn primary" type="submit">Save settings</button></form></div><div class="card"><h2>Current calendar</h2><p>New periods use these settings; stored factual timestamps do not move.</p><div class="data-note">Week: ${H(short(periodBounds('weekly',Date.now(),state.settings).start))} to ${H(short(periodBounds('weekly',Date.now(),state.settings).end))}</div></div></div>`;}
+function styleScreenHead(titleText,subtitle){
+ return `<div class="style-screen-head">${stylePanel!=='overview'?btn('‹','style-back','','style-back-btn'):''}<div><div class="eyebrow">Visual system</div><h2>${H(titleText)}</h2>${subtitle?`<p>${H(subtitle)}</p>`:''}</div></div>`;
+}
+function styleValueRow(label,value,action,detail=''){
+ return `<button type="button" class="style-value-row" data-action="style-panel" data-id="${H(action)}"><span><strong>${H(label)}</strong>${detail?`<small>${H(detail)}</small>`:''}</span><span class="style-row-value">${H(value)} <b>›</b></span></button>`;
+}
+function styleOverview(){
+ const visual=currentVisual(),palette=visual.palette,customCount=Object.keys(state.settings.categoryColors||{}).length;
+ return `<div class="style-studio style-overview stack">
+  ${styleScreenHead('Make SAMT yours','Layout, appearance, colour and writing style are independent.')}
+  <section class="style-preview-card">
+    <div class="style-preview-visual">${layoutPreview(visual.layout)}<div class="preview-palette">${paletteSwatches(palette)}</div></div>
+    <div class="style-preview-copy"><div class="eyebrow">Current look</div><h3>${H(title(visual.layout))}</h3><p>${H(title(theme()))} · ${H(PALETTES[visual.paletteId]?.name||visual.palette.name||'Custom')} · ${H(title(visual.typography))}</p></div>
+  </section>
+  <section class="style-menu card">
+   ${styleValueRow('Layout',title(visual.layout),'layout','Five genuinely different structures')}
+   ${styleValueRow('Appearance',title(state.settings.appearance||'system'),'appearance','Follow phone, Light, Dark or Neon')}
+   ${styleValueRow('Colour palette',PALETTES[visual.paletteId]?.name||visual.palette.name||'Custom','palette','Reusable colour systems')}
+   ${styleValueRow('Writing style',title(visual.typography),'typography','Typography independent from layout')}
+   ${styleValueRow('Category colours',customCount?`${customCount} custom`:'Automatic','categories','No forced Religion/Health/etc. colours')}
+   ${styleValueRow('Effects',`${title(visual.density||'comfortable')} · ${title(visual.motion||'subtle')}`,'effects','Density, motion and preset name')}
+  </section>
+  <section class="style-menu card">
+   ${styleValueRow('Ready presets','5 included','presets','Apply or export complete looks')}
+   <div class="style-inline-actions">${btn('Export current','export-style')}${btn('Import preset','import-style')}</div>
+  </section>
+ </div>`;
+}
+function styleLayoutPicker(){
+ const visual=currentVisual(),cards=LAYOUTS.map(x=>`<button type="button" class="layout-choice layout-choice-large ${visual.layout===x.id?'active':''}" data-action="set-layout" data-id="${H(x.id)}">${layoutPreview(x.id)}<span class="layout-choice-copy"><strong>${H(x.name)}</strong><small>${H(x.description)}</small></span><span class="choice-check">${visual.layout===x.id?'✓':''}</span></button>`).join('');
+ return `<div class="style-studio style-subpage stack">${styleScreenHead('Choose layout','These change structure, not merely colour.') }<div class="layout-picker-list">${cards}</div></div>`;
+}
+function styleAppearancePicker(){
+ const selected=state.settings.appearance||'system';
+ const items=[['system','Follow phone','Uses the phone appearance and switches automatically.'],['light','Light','Bright surfaces with high-contrast dark text.'],['dark','Dark','Deep surfaces with restrained highlights.'],['neon','Neon','Near-black surfaces, saturated accents and controlled glow.']];
+ return `<div class="style-studio style-subpage stack">${styleScreenHead('Appearance','Generated from your current palette.') }<div class="appearance-picker">${items.map(([id,name,desc])=>`<button type="button" class="appearance-choice appearance-${id} ${selected===id?'active':''}" data-action="set-appearance" data-id="${id}"><span class="appearance-demo"><i></i><i></i><b></b></span><span><strong>${name}</strong><small>${desc}</small></span><em>${selected===id?'✓':''}</em></button>`).join('')}</div></div>`;
+}
+function stylePalettePicker(){
+ const visual=currentVisual(),p=visual.palette;
+ const palettes=Object.entries(PALETTES).map(([id,palette])=>`<button type="button" class="palette-choice palette-choice-large ${visual.paletteId===id?'active':''}" data-action="set-palette" data-id="${H(id)}">${paletteSwatches(palette)}<span><strong>${H(palette.name)}</strong><small>${H(palette.description)}</small></span><em>${visual.paletteId===id?'✓':''}</em></button>`).join('');
+ return `<div class="style-studio style-subpage stack">${styleScreenHead('Colour palette','Choose a preset or tune every role yourself.')}<div class="palette-picker-list">${palettes}</div><form class="card custom-palette-form" data-form="palette-settings"><div class="card-heading"><div><h2>Custom palette</h2><p class="small">Editing creates your own palette. Light, Dark and Neon are derived from these seven roles.</p></div></div><input type="hidden" name="paletteId" value="${H(visual.paletteId)}"><div class="colour-editor">${[['Primary','primary'],['Secondary','secondary'],['Accent','accent'],['Neutral','neutral'],['Success','success'],['Warning','warning'],['Danger','danger']].map(([label,key])=>field(label,key,p[key],'color')).join('')}</div><button class="btn primary" type="submit">Save custom palette</button></form></div>`;
+}
+function styleTypographyPicker(){
+ const visual=currentVisual();
+ return `<div class="style-studio style-subpage stack">${styleScreenHead('Writing style','Typography changes character without changing layout.') }<div class="type-picker">${TYPOGRAPHIES.map(x=>`<button type="button" class="type-choice type-${H(x.id)} ${visual.typography===x.id?'active':''}" data-action="set-typography" data-id="${H(x.id)}"><span class="type-sample">Aa</span><span><strong>${H(x.name)}</strong><small>${H(x.description)}</small></span><em>${visual.typography===x.id?'✓':''}</em></button>`).join('')}</div></div>`;
+}
+function styleCategoryPicker(){
+ const visual=currentVisual(),p=visual.palette,categoryColors=state.settings.categoryColors||{};
+ const cats=state.categories.map(cat=>{const color=categoryColors[cat.id]||p.primary,use=!!categoryColors[cat.id];return `<div class="category-colour"><label><input type="checkbox" name="catuse_${H(cat.id)}" ${use?'checked':''}> <span>${H(cat.name)}</span></label><input type="color" name="cat_${H(cat.id)}" value="${H(color)}"><small>${use?'Custom colour':'Automatic / neutral'}</small></div>`;}).join('');
+ return `<div class="style-studio style-subpage stack">${styleScreenHead('Category colours','Nothing is forced. Assign colours only where you want them.') }<form class="card" data-form="category-colours">${cats||'<p class="small">Create Categories first, then optional colours can be assigned here.</p>'}<div class="style-form-foot"><button class="btn primary" type="submit">Save category colours</button></div></form></div>`;
+}
+function styleEffectsPicker(){
+ const visual=currentVisual();
+ return `<div class="style-studio style-subpage stack">${styleScreenHead('Effects & density','Control motion and spacing separately from the visual identity.') }<form class="card" data-form="effects-settings"><div class="form-grid">${select('Density','density',[['compact','Compact'],['comfortable','Comfortable'],['spacious','Spacious']],visual.density||'comfortable')}${select('Motion','motion',[['off','Off'],['subtle','Subtle'],['expressive','Expressive']],visual.motion||'subtle')}</div>${field('Preset name','presetName',visual.presetName||'My SAMT style','text','Used when exporting your current style.')}<button class="btn primary" type="submit">Save effects</button></form></div>`;
+}
+function stylePresetPicker(){
+ const full=Object.entries(FULL_PRESETS).map(([id,preset])=>`<article class="preset-card preset-card-large"><div><strong>${H(preset.name)}</strong><small>${H(title(preset.layout))} · ${H(title(preset.appearance))} · ${H(title(preset.typography))} · ${H(PALETTES[preset.paletteId].name)}</small></div>${paletteSwatches(PALETTES[preset.paletteId])}<div class="actions">${btn('Apply','full-preset',`data-id="${H(id)}"`,'tiny primary')}${btn('Export','export-full-preset',`data-id="${H(id)}"`,'tiny')}</div></article>`).join('');
+ return `<div class="style-studio style-subpage stack">${styleScreenHead('Ready presets','Complete combinations you can apply, export and customise.') }<div class="preset-picker-list">${full}</div><div class="style-inline-actions">${btn('Export current','export-style')}${btn('Import preset','import-style')}</div></div>`;
+}
+function settingsStyle(){
+ if(stylePanel==='layout')return styleLayoutPicker();
+ if(stylePanel==='appearance')return styleAppearancePicker();
+ if(stylePanel==='palette')return stylePalettePicker();
+ if(stylePanel==='typography')return styleTypographyPicker();
+ if(stylePanel==='categories')return styleCategoryPicker();
+ if(stylePanel==='effects')return styleEffectsPicker();
+ if(stylePanel==='presets')return stylePresetPicker();
+ return styleOverview();
+}
+function settingsGeneral(){function settingsGeneral(){const defaults=state.settings.defaults||{};return `<div class="cols"><div class="card"><h2>Calendar & behaviour</h2><p class="small">Calendar choices control future boundaries without rewriting history.</p><form data-form="settings">${select('Week begins','weekStartsOn',[[1,'Monday'],[0,'Sunday']],state.settings.weekStartsOn)}${field('Timezone','timezone',state.settings.timezone,'text','Daily Runs close at local midnight.')}${field('Planned weekly capacity (hours)','capacityHours',state.settings.capacityHours,'number')}<div class="separator"></div><h3>Default behaviour</h3>${select('New Action List items','actionListUnfinished',[['expire','Become Missed at deadline'],['stay_overdue','Stay overdue'],['carry_forward','Carry forward']],defaults.actionListUnfinished||'expire')}${select('Missed Cycle item','cycleMissed',[['keep_position','Keep it next'],['skip_to_next','Move to next'],['restart','Restart cycle']],defaults.cycleMissed||'keep_position')}<button class="btn primary" type="submit">Save settings</button></form></div><div class="card"><h2>Current calendar</h2><p>New periods use these settings; stored factual timestamps do not move.</p><div class="data-note">Week: ${H(short(periodBounds('weekly',Date.now(),state.settings).start))} to ${H(short(periodBounds('weekly',Date.now(),state.settings).end))}</div></div></div>`;}
 function settingsBuild(){return `<div class="stack"><div class="card"><h2>Starter routines</h2><p class="small">Editable starting structures for your prayer, hygiene and nutrition plans.</p><div class="actions">${[['religion','Prayer & religion'],['hygiene','Hygiene'],['nutrition','Nutrition']].map(([key,label])=>btn(label,'starter',`data-id="${key}" ${state.blocks.some(b=>b.templateKey===key)?'disabled':''}`,'tiny')).join('')}</div></div><div class="grid">${[['categories','Categories'],['tags','Tags'],['units','Units']].map(([kind,label])=>`<div class="card"><div class="card-heading"><h2>${label}</h2>${btn('+ Add',`new-${kind}`,'','tiny')}</div>${state[kind].map(x=>`<div class="row"><div class="row-main"><strong>${H(x.name)}</strong><small>${H(x.dimension||x.symbol||x.status||'')}</small></div>${btn('Archive','archive',`data-kind="${kind}" data-id="${H(x.id)}"`,'tiny')}${btn('Bin','bin',`data-kind="${kind}" data-id="${H(x.id)}"`,'tiny danger')}</div>`).join('')||'<p class="small">None yet.</p>'}</div>`).join('')}</div></div>`;}
 function definitionRecords(){
  const all=[['categories',state.categories],['tags',state.tags],['units',state.units],['actions',state.actions],['blocks',state.blocks]].flatMap(([kind,items])=>items.map(item=>{
@@ -392,16 +460,20 @@ window.SamtReceiveImport=text=>{try{applyIncoming(text);}catch(e){show(`Import c
 const input=document.createElement('input');input.type='file';input.accept='.json,application/json';input.hidden=true;input.addEventListener('change',()=>{if(input.files?.[0])importFile(input.files[0]);input.value='';});document.body.appendChild(input);
 root.addEventListener('click',e=>{const node=e.target.closest('[data-route],[data-action],[data-filter],[data-activity],[data-settings]');if(!node)return;
  if(node.dataset.stop)return;if(node.dataset.route){navigate(node.dataset.route);return;}
- if(node.dataset.filter){tab=node.dataset.filter;render();return;}if(node.dataset.activity){activityTab=node.dataset.activity;render();return;}if(node.dataset.settings){settingsTab=node.dataset.settings;render();return;}
+ if(node.dataset.filter){tab=node.dataset.filter;render();return;}if(node.dataset.activity){activityTab=node.dataset.activity;render();return;}if(node.dataset.settings){settingsTab=node.dataset.settings;if(settingsTab==='style')stylePanel='overview';render();return;}
  const a=node.dataset.action,id=node.dataset.id;
  if(a==='close-modal'){closeEditorModal();return;}if(a==='theme'){const modes=['system','light','dark','neon'],current=state.settings.appearance||'system',next=modes[(modes.indexOf(current)+1)%modes.length];command('SET_SETTINGS',{changes:{appearance:next}});show(`Appearance: ${title(next)}`);return;}
- if(a==='set-layout'){const visual={...currentVisual(),layout:id};command('SET_SETTINGS',{changes:{visual}});settingsTab='style';return;}
- if(a==='set-palette'){const palette=PALETTES[id];if(palette){const visual={...currentVisual(),paletteId:id,palette:{...palette}};command('SET_SETTINGS',{changes:{visual,accent:palette.primary}});settingsTab='style';}return;}
+ if(a==='style-panel'){stylePanel=id;settingsTab='style';render();return;}
+ if(a==='style-back'){stylePanel='overview';settingsTab='style';render();return;}
+ if(a==='set-layout'){const visual={...currentVisual(),layout:id};command('SET_SETTINGS',{changes:{visual}});settingsTab='style';stylePanel='layout';return;}
+ if(a==='set-appearance'){command('SET_SETTINGS',{changes:{appearance:id}});settingsTab='style';stylePanel='appearance';return;}
+ if(a==='set-typography'){const visual={...currentVisual(),typography:id};command('SET_SETTINGS',{changes:{visual}});settingsTab='style';stylePanel='typography';return;}
+ if(a==='set-palette'){const palette=PALETTES[id];if(palette){const visual={...currentVisual(),paletteId:id,palette:{...palette}};command('SET_SETTINGS',{changes:{visual,accent:palette.primary}});settingsTab='style';stylePanel='palette';}return;}
  if(a==='full-preset'){applyFullPreset(id);return;}
  if(a==='export-full-preset'){exportBundledPreset(id);show('Ready preset exported.');return;}
  if(a==='export-style'){exportStylePreset();show('Style preset ready to save.');return;}
  if(a==='import-style'){if(window.SamtAndroid)window.SamtAndroid.importFile();else input.click();return;}
- if(a==='go-blocks'||a==='back-blocks'){navigate('blocks');return;}if(a==='go-actions'){navigate('actions');return;}if(a==='go-settings'){settingsTab='style';navigate('settings');return;}
+ if(a==='go-blocks'||a==='back-blocks'){navigate('blocks');return;}if(a==='go-actions'){navigate('actions');return;}if(a==='go-settings'){settingsTab='style';stylePanel='overview';navigate('settings');return;}
  if(a==='block-detail'){navigate('blocks',id);return;}if(a==='todo'){command('COMPLETE_TODO',{occurrenceId:id});return;}
  if(a==='resume-block'){command('RESUME_BLOCK',{blockId:id});return;}
  if(a==='starter'){if(command('ADD_STARTER',{which:id})){navigate('blocks');show('Routines added and started.');}return;}
@@ -457,12 +529,19 @@ root.addEventListener('click',e=>{const node=e.target.closest('[data-route],[dat
  if(a)modalFor(a,node);
 });
 root.addEventListener('submit',e=>{e.preventDefault();const form=e.target,d=formObject(form);
- if(form.dataset.form==='style-settings'){
+ if(form.dataset.form==='palette-settings'){
    const selected=PALETTES[d.paletteId],palette={name:'Custom',description:'User-edited SAMT palette.',primary:d.primary,secondary:d.secondary,accent:d.accent,neutral:d.neutral,success:d.success,warning:d.warning,danger:d.danger};
    const same=selected&&['primary','secondary','accent','neutral','success','warning','danger'].every(k=>String(selected[k]).toLowerCase()===String(palette[k]).toLowerCase());
-   const visual={...currentVisual(),typography:d.typography,density:d.density,motion:d.motion,presetName:d.presetName.trim()||'My SAMT style',paletteId:same?d.paletteId:'custom',palette:same?{...selected}:palette};
+   const visual={...currentVisual(),paletteId:same?d.paletteId:'custom',palette:same?{...selected}:palette};
+   command('SET_SETTINGS',{changes:{accent:visual.palette.primary,visual}});settingsTab='style';stylePanel='palette';show('Palette saved.');return;
+ }
+ if(form.dataset.form==='category-colours'){
    const categoryColors={};for(const cat of state.categories)if(d[`catuse_${cat.id}`])categoryColors[cat.id]=d[`cat_${cat.id}`];
-   command('SET_SETTINGS',{changes:{appearance:d.appearance,accent:visual.palette.primary,visual,categoryColors}});settingsTab='style';show('Visual style saved.');return;
+   command('SET_SETTINGS',{changes:{categoryColors}});settingsTab='style';stylePanel='categories';show('Category colours saved.');return;
+ }
+ if(form.dataset.form==='effects-settings'){
+   const visual={...currentVisual(),density:d.density,motion:d.motion,presetName:d.presetName.trim()||'My SAMT style'};
+   command('SET_SETTINGS',{changes:{visual}});settingsTab='style';stylePanel='effects';show('Effects saved.');return;
  }
  if(form.dataset.form==='settings'){command('SET_SETTINGS',{changes:{timezone:d.timezone,weekStartsOn:Number(d.weekStartsOn),capacityHours:Number(d.capacityHours),defaults:{...(state.settings.defaults||{}),actionListUnfinished:d.actionListUnfinished,cycleMissed:d.cycleMissed}}});show('Settings saved.');return;}
  if(form.dataset.form==='manager-filter'){dataFilter={query:d.query,type:d.type,status:d.status,usage:d.usage};render();return;}if(form.dataset.form==='bin-filter'){binFilter={query:d.query,type:d.type};render();return;}try{submit(form);}catch(error){show(error.message,'bad');}});
