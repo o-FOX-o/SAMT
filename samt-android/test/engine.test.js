@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {emptyState,execute,reconcile,periodBounds,home,overview,backup,importBackup,validate,alarmRequests,definitionImpact,dataClearImpact} from '../web/engine.js';
+import {LAYOUTS,TYPOGRAPHIES,PALETTES,FULL_PRESETS,visualSettings,resolvedAppearance,applyVisual,presetFromSettings,parseStylePreset,contrast} from '../web/visual.js';
 
 const at=(s)=>Date.parse(s);
 const issue=(state,type,when,other={})=>execute(state,{type,...other},at(when));
@@ -397,4 +398,34 @@ assert.equal(peOverride.runs.find(r=>r.blockId===peOverrideRoutine.id).children[
 
 assert.throws(()=>issue(peOverride,'EDIT_DEFINITION','2026-02-03T10:05:00Z',{kind:'blocks',id:peOverrideRoutine.id,changes:{type:'project'}}),/Block type cannot be changed/);
 
-console.log('PASS: snapshots, DST rollover, blank deadlines, archive safety, timezone rescheduling, midweek nested routines, missed logs, discrete Results, multi-Result Targets, relationship overrides, paused Targets, same-day resume, Action/Todo distinction, shared contexts, cycles, alarms, Avoid, Workflow, Project conditions/scope/deadlines/dependencies, Target, pause/resume and data safety');
+
+assert.equal(LAYOUTS.length,5,'SAMT ships five distinct layout choices');
+assert.ok(TYPOGRAPHIES.length>=5,'writing style stays independent from layout');
+assert.ok(Object.keys(PALETTES).length>=10,'colour library includes ready palettes');
+assert.deepEqual(Object.keys(FULL_PRESETS).sort(),['bare','celestial','paper','pulse','terminal']);
+
+const visualState=emptyState();
+for(const appearance of ['light','dark','neon']){
+  visualState.settings.appearance=appearance;
+  visualState.settings.visual={...visualState.settings.visual,layout:'matrix',typography:'technical',paletteId:'midnight',palette:{...PALETTES.midnight}};
+  const vars={},fakeRoot={dataset:{},style:{setProperty:(key,value)=>{vars[key]=value;}}};
+  const applied=applyVisual(fakeRoot,visualState.settings,false);
+  assert.equal(applied.appearance,appearance);
+  assert.equal(fakeRoot.dataset.layout,'matrix');
+  assert.equal(fakeRoot.dataset.type,'technical');
+  assert.ok(contrast(vars['--ink'],vars['--bg'])>=7,'generated body text keeps strong contrast');
+  assert.ok(contrast(vars['--accent-ink'],vars['--accent'])>=4.5,'generated button text remains readable on the chosen accent');
+}
+visualState.settings.appearance='system';
+assert.equal(resolvedAppearance(visualState.settings,true),'dark');
+assert.equal(resolvedAppearance(visualState.settings,false),'light');
+
+const exportedStyle=presetFromSettings(visualState.settings,{category_health:'#123456'});
+const parsedStyle=parseStylePreset(JSON.stringify(exportedStyle));
+assert.equal(parsedStyle.format,'samt-style-preset');
+assert.equal(parsedStyle.layout,'matrix');
+assert.equal(parsedStyle.categoryColors.category_health,'#123456');
+assert.throws(()=>parseStylePreset(JSON.stringify({...exportedStyle,palette:{...exportedStyle.palette,primary:'#zzzzzz'}})),/Invalid primary colour/);
+assert.equal(visualSettings({visual:{layout:'journal',paletteId:'paper-does-not-exist',palette:{...PALETTES.sand}}}).layout,'journal');
+
+console.log('PASS: domain contract plus five-layout visual engine, palette derivation, contrast safety and style preset round trip');
