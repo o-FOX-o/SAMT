@@ -427,5 +427,6 @@ assert.equal(parsedStyle.layout,'matrix');
 assert.equal(parsedStyle.categoryColors.category_health,'#123456');
 assert.throws(()=>parseStylePreset(JSON.stringify({...exportedStyle,palette:{...exportedStyle.palette,primary:'#zzzzzz'}})),/Invalid primary colour/);
 assert.equal(visualSettings({visual:{layout:'journal',paletteId:'paper-does-not-exist',palette:{...PALETTES.sand}}}).layout,'journal');
+assert.equal(visualSettings({appearance:'light',accent:'#112233'}).palette.primary,'#112233','legacy accent survives the visual-system upgrade');
 
 console.log('PASS: domain contract plus five-layout visual engine, palette derivation, contrast safety and style preset round trip');
