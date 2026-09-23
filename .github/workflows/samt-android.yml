@@ -36,6 +36,7 @@ jobs:
           path: |
             samt-android/ui-preview.png
             samt-android/ui-layout-*.png
+            samt-android/ui-style-*.png
             samt-android/ui-landscape-style.png
             samt-android/ui-starters.png
             samt-android/ui-data.png

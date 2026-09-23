@@ -44,8 +44,11 @@ async function connect(){
   await until('document.querySelector(".style-overview") !== null');
   assert.equal(await evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1'),true,'Style overview must not overflow portrait');
   assert.equal(await evaluate('document.querySelectorAll(".settings-tabs button").length'),6);
+  await capture('ui-style-overview.png');
 
   await evaluate('document.querySelector("[data-action=style-panel][data-id=layout]").click()');
+  await until('document.querySelectorAll("[data-action=set-layout]").length === 5');
+  await capture('ui-style-layouts.png');
   await until('document.querySelectorAll("[data-action=set-layout]").length === 5');
   for(const layout of ['simple','command','journal','matrix','orbit']){
     await evaluate(`document.querySelector('[data-action=set-layout][data-id=${layout}]').click()`);
