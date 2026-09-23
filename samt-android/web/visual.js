@@ -76,10 +76,11 @@ const ensureContrast=(foreground,background,min=4.5)=>{
 };
 
 export function visualSettings(settings={}){
-  const visual={...VISUAL_DEFAULTS,...(settings.visual||{})};
+  const legacy=!settings.visual,visual={...VISUAL_DEFAULTS,...(settings.visual||{})};
   const builtIn=PALETTES[visual.paletteId];
   const saved=(visual.savedPalettes||[]).find(p=>p.id===visual.paletteId);
   visual.palette={...(builtIn||saved||visual.palette||PALETTES.samt)};
+  if(legacy&&/^#[0-9a-f]{6}$/i.test(settings.accent||''))visual.palette={...visual.palette,primary:settings.accent};
   visual.savedPalettes=Array.isArray(visual.savedPalettes)?visual.savedPalettes:[];
   return visual;
 }
