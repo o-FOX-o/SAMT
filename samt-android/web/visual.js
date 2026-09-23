@@ -132,7 +132,7 @@ export function applyVisual(root,settings={},prefersDark=false){
   root.dataset.theme=appearance;root.dataset.layout=visual.layout;root.dataset.type=visual.typography;root.dataset.density=visual.density||'comfortable';root.dataset.motion=visual.motion||'subtle';
   const vars={
     '--bg':tokens.bg,'--panel':tokens.panel,'--panel2':tokens.panel2,'--ink':tokens.ink,'--muted':tokens.muted,'--line':tokens.line,'--nav':tokens.nav,
-    '--hero':tokens.hero,'--hero2':tokens.hero2,'--hero-ink':tokens.heroInk,'--accent':tokens.accent,'--accent2':tokens.accent2,'--focus':tokens.focus,
+    '--hero':tokens.hero,'--hero2':tokens.hero2,'--hero-ink':tokens.heroInk,'--accent':tokens.accent,'--accent-ink':readableText(tokens.accent),'--accent2':tokens.accent2,'--focus':tokens.focus,
     '--good':tokens.good,'--warn':tokens.warn,'--bad':tokens.bad,'--shadow':tokens.shadow,'--neon-glow':tokens.glow,'--font-body':font.body,'--font-display':font.display,'--display-tracking':font.tracking
   };
   for(const [key,value] of Object.entries(types))vars[`--type-${key.replace('_','-')}`]=value;
