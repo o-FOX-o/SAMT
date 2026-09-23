@@ -106,6 +106,26 @@ public class MainActivity extends Activity {
         @JavascriptInterface public boolean scheduleAlarms(String json) {
             try {Alarms.replaceAll(MainActivity.this,json);return true;}catch(Exception ignored){return false;}
         }
+        @JavascriptInterface public void setSystemBars(String background,boolean darkIcons) {
+            runOnUiThread(()->{
+                try {
+                    int color=Color.parseColor(background);
+                    getWindow().setStatusBarColor(color);
+                    getWindow().setNavigationBarColor(color);
+                    int flags=web.getSystemUiVisibility();
+                    if(Build.VERSION.SDK_INT>=23) {
+                        if(darkIcons)flags|=View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                        else flags&=~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR;
+                    }
+                    if(Build.VERSION.SDK_INT>=26) {
+                        if(darkIcons)flags|=View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                        else flags&=~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR;
+                    }
+                    web.setSystemUiVisibility(flags);
+                    web.setBackgroundColor(color);
+                } catch(Exception ignored) {}
+            });
+        }
         @JavascriptInterface public boolean testAlarm() {
             try {return Alarms.test(MainActivity.this,10_000);}catch(Exception ignored){return false;}
         }
