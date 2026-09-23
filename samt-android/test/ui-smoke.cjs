@@ -36,10 +36,23 @@ async function connect(){
   await send('Emulation.setDeviceMetricsOverride',{width:412,height:915,deviceScaleFactor:1,mobile:true});
   await send('Page.navigate',{url:'http://127.0.0.1:8765/index.html'});
   await until('document.querySelector("h1")?.textContent === "Today"');
-  assert.equal(await evaluate('document.querySelector(".hero h2")?.textContent'),'Make the first move');
+  assert.equal(await evaluate('document.querySelector(".bearing-panel h2")?.textContent'),'Make the first move');
+  assert.equal(await evaluate('document.documentElement.dataset.layout'),'orbit');
   await capture('ui-preview.png');
 
   await evaluate('document.querySelector(".bottom [data-route=settings]").click()');
+  await until('document.querySelectorAll("[data-action=set-layout]").length === 5');
+  assert.equal(await evaluate('document.querySelectorAll("[data-action=set-palette]").length >= 10'),true);
+  await evaluate('document.querySelector("[data-action=set-layout][data-id=simple]").click()');
+  await until('document.documentElement.dataset.layout === "simple"');
+  await evaluate('document.querySelector("[data-action=set-layout][data-id=matrix]").click()');
+  await until('document.documentElement.dataset.layout === "matrix"');
+  await evaluate('document.querySelector("[data-action=set-layout][data-id=orbit]").click()');
+  await until('document.documentElement.dataset.layout === "orbit"');
+  await evaluate('document.querySelector("[data-action=set-palette][data-id=ocean]").click()');
+  await until('getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() === "#1976a3"');
+  await evaluate('document.querySelector("[data-action=set-palette][data-id=samt]").click()');
+  await until('getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() === "#147d86"');
   await evaluate('document.querySelector("[data-settings=build]").click()');
   await until('!!document.querySelector("[data-action=starter][data-id=religion]")');
   await evaluate('document.querySelector("[data-action=starter][data-id=religion]").click()');
@@ -120,5 +133,5 @@ async function connect(){
   await until('document.documentElement.dataset.theme === "dark"');
   await capture('ui-dark.png');
   socket.close();
-  console.log('PASS: mobile Today, prayer starter, active Runs, Project editor, Data Manager, backup import, and Dark mode');
+  console.log('PASS: visual layouts/palettes, mobile Today, prayer starter, active Runs, Project editor, Data Manager, backup import, and Dark mode');
 })().catch(e=>{console.error(e);process.exit(1);});
