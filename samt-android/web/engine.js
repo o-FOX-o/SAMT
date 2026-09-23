@@ -51,7 +51,7 @@ export function periodBounds(kind,instant,settings={}) {
   return {key:start,start:zoned(start,'00:00',zone),end:zoned(end,'00:00',zone),timezone:zone};
 }
 export function emptyState() {
-  return {format:'samt',schemaVersion:VERSION,settings:{timezone:'Europe/London',weekStartsOn:1,appearance:'system',accent:'#147d86',categoryColors:{},capacityHours:40,defaults:{cycleMissed:'keep_position',cyclePosition:'continue',cycleAutoClose:true,targetAutoClose:true,actionListUnfinished:'expire'}},
+  return {format:'samt',schemaVersion:VERSION,settings:{timezone:'Europe/London',weekStartsOn:1,appearance:'system',accent:'#147d86',categoryColors:{},capacityHours:40,visual:{layout:'orbit',typography:'clean',paletteId:'samt',palette:{name:'SAMT',description:'Deep teal, mineral blue and restrained gold.',primary:'#147d86',secondary:'#385970',accent:'#c39a52',neutral:'#65758a',success:'#2f8f6a',warning:'#c8872f',danger:'#c45360'},savedPalettes:[],density:'comfortable',motion:'subtle',glow:'low',presetName:'My SAMT style'},defaults:{cycleMissed:'keep_position',cyclePosition:'continue',cycleAutoClose:true,targetAutoClose:true,actionListUnfinished:'expire'}},
     categories:[],tags:[],units:[],actions:[],blocks:[],activations:[],runs:[],occurrences:[],periods:[],cycles:[],actionLogs:[],reviews:[],history:[],bin:[],restorePoints:[],meta:{createdAt:null,updatedAt:null}};
 }
 const arrays=['categories','tags','units','actions','blocks','activations','runs','occurrences','periods','cycles','actionLogs','reviews','history','bin','restorePoints'];
