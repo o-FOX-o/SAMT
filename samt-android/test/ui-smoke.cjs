@@ -43,12 +43,15 @@ async function connect(){
   await evaluate('document.querySelector(".bottom [data-route=settings]").click()');
   await until('document.querySelectorAll("[data-action=set-layout]").length === 5');
   assert.equal(await evaluate('document.querySelectorAll("[data-action=set-palette]").length >= 10'),true);
-  await evaluate('document.querySelector("[data-action=set-layout][data-id=simple]").click()');
-  await until('document.documentElement.dataset.layout === "simple"');
-  await evaluate('document.querySelector("[data-action=set-layout][data-id=matrix]").click()');
-  await until('document.documentElement.dataset.layout === "matrix"');
-  await evaluate('document.querySelector("[data-action=set-layout][data-id=orbit]").click()');
-  await until('document.documentElement.dataset.layout === "orbit"');
+  for(const layout of ['simple','command','journal','matrix','orbit']){
+    await evaluate(`document.querySelector('[data-action=set-layout][data-id=${layout}]').click()`);
+    await until(`document.documentElement.dataset.layout === "${layout}"`);
+    await evaluate('document.querySelector(".bottom [data-route=home]").click()');
+    await until(`document.querySelector('.home-${layout}') !== null`);
+    await capture(`ui-layout-${layout}.png`);
+    await evaluate('document.querySelector(".bottom [data-route=settings]").click()');
+    await until('document.querySelectorAll("[data-action=set-layout]").length === 5');
+  }
   await evaluate('document.querySelector("[data-action=set-palette][data-id=ocean]").click()');
   await until('getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() === "#1976a3"');
   await evaluate('document.querySelector("[data-action=set-palette][data-id=samt]").click()');
