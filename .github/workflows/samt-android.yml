@@ -33,6 +33,7 @@ jobs:
           name: samt-screen-preview
           path: |
             samt-android/ui-preview.png
+            samt-android/ui-layout-*.png
             samt-android/ui-starters.png
             samt-android/ui-data.png
             samt-android/ui-dark.png
