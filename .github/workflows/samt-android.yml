@@ -24,6 +24,8 @@ jobs:
       - name: Build signed Android preview
         run: gradle :app:assembleRelease
         working-directory: samt-android
+        env:
+          SAMT_BUILD_NUMBER: ${{ github.run_number }}
       - uses: actions/upload-artifact@v4
         with:
           name: samt-android-preview

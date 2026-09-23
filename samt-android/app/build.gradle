@@ -2,7 +2,7 @@ plugins {
     id 'com.android.application'
 }
 
-def previewBuild = (System.getenv('SAMT_BUILD_NUMBER') ?: '101').toInteger()
+def previewBuild = (System.getenv('SAMT_BUILD_NUMBER') ?: '0').toInteger()
 
 android {
     namespace 'app.samt.android'
@@ -12,8 +12,8 @@ android {
         applicationId 'app.samt.android'
         minSdk 26
         targetSdk 35
-        versionCode 20000 + previewBuild
-        versionName "0.2.${previewBuild}"
+        versionCode 30000 + previewBuild
+        versionName "0.3.${previewBuild}"
     }
 
     signingConfigs {
