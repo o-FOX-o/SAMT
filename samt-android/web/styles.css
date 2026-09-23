@@ -211,3 +211,163 @@ html[data-type=display] .top h1{font-size:28px;font-weight:850}
  .journal-cover h2{font-size:31px}.journal-score{position:static;text-align:left;margin-top:18px}.journal-entry{grid-template-columns:50px 1fr;gap:10px}.journal-entry:before{left:54px}
  .matrix-board{grid-template-columns:1fr 1fr;gap:8px}.matrix-tile{padding:13px}.matrix-primary{grid-column:span 2;grid-row:auto}.matrix-wide{grid-column:span 2}.matrix-primary h2{font-size:25px}.tile-number{font-size:36px}
 }
+
+
+/* ============================================================
+   VISUAL SYSTEM POLISH — focused settings screens + real phone
+   responsiveness. Added after the first visual-system pass so it
+   intentionally overrides the earlier gallery prototypes.
+   ============================================================ */
+.style-studio,.style-studio *{min-width:0}
+.style-screen-head{display:flex;align-items:flex-start;gap:12px;margin:2px 2px 4px;max-width:100%}
+.style-screen-head>div{min-width:0}
+.style-screen-head h2{font-size:26px;line-height:1.08;margin:4px 0 7px;overflow-wrap:anywhere}
+.style-screen-head p{margin:0;max-width:680px;line-height:1.45}
+.style-back-btn{width:40px;min-width:40px;height:40px;padding:0!important;font-size:25px!important;border-radius:12px!important;margin-top:1px}
+.style-overview{max-width:920px}
+.style-preview-card{display:grid;grid-template-columns:180px minmax(0,1fr);gap:18px;align-items:center;background:linear-gradient(135deg,color-mix(in srgb,var(--accent) 10%,var(--panel)),var(--panel));border:1px solid var(--line);border-radius:22px;padding:18px;overflow:hidden}
+.style-preview-visual{height:120px;border-radius:16px;background:var(--panel2);border:1px solid var(--line);display:grid;place-items:center;position:relative;overflow:hidden}
+.style-preview-visual .layout-preview{width:86%;height:78%}
+.style-preview-visual .preview-palette{position:absolute;left:10px;bottom:9px;padding:4px 5px;border-radius:7px;background:color-mix(in srgb,var(--panel) 78%,transparent);backdrop-filter:blur(8px)}
+.style-preview-visual .swatches i{height:14px;width:11px}
+.style-preview-copy h3{font-family:var(--font-display);font-size:26px;margin:4px 0 5px}
+.style-preview-copy p{margin:0}
+.style-menu{padding:4px 18px}
+.style-value-row{width:100%;border:0;background:transparent;color:var(--ink);display:flex;align-items:center;justify-content:space-between;gap:16px;text-align:left;padding:16px 0;border-top:1px solid var(--line)}
+.style-value-row:first-child{border-top:0}
+.style-value-row>span:first-child{display:grid;gap:3px;min-width:0}
+.style-value-row strong{font-size:15px}
+.style-value-row small{font-size:11px;color:var(--muted);font-weight:500;line-height:1.3}
+.style-row-value{display:flex;align-items:center;gap:9px;color:var(--muted);font-size:13px;font-weight:750;white-space:nowrap;max-width:44%;overflow:hidden;text-overflow:ellipsis}
+.style-row-value b{font-size:21px;color:var(--accent);font-weight:500}
+.style-inline-actions{display:flex;gap:8px;flex-wrap:wrap;padding:12px 0 14px}
+.style-subpage{max-width:980px}
+.layout-picker-list,.palette-picker-list,.preset-picker-list,.appearance-picker,.type-picker{display:grid;gap:11px}
+.layout-choice-large{display:grid;grid-template-columns:210px minmax(0,1fr) 30px;align-items:center;gap:18px;width:100%;min-height:150px;padding:14px;border-radius:18px;border:1px solid var(--line);background:var(--panel);color:var(--ink);text-align:left;box-shadow:none}
+.layout-choice-large.active,.palette-choice-large.active,.appearance-choice.active,.type-choice.active{border-color:color-mix(in srgb,var(--accent) 82%,var(--line));background:color-mix(in srgb,var(--accent) 7%,var(--panel));box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 30%,transparent)}
+.layout-choice-copy{display:grid;gap:5px}.layout-choice-copy strong{font-size:18px}.layout-choice-copy small{color:var(--muted);line-height:1.4}
+.choice-check{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:color-mix(in srgb,var(--accent) 14%,var(--panel));color:var(--accent);font-weight:850}
+.layout-preview{height:118px;border-radius:13px;background:color-mix(in srgb,var(--panel2) 88%,var(--bg));border:1px solid var(--line);padding:12px;position:relative;overflow:hidden;display:grid;gap:7px}
+.layout-preview i,.layout-preview b{display:block;background:color-mix(in srgb,var(--accent) 22%,var(--panel));border-radius:5px}
+.preview-simple{grid-template-rows:10px repeat(4,1fr)}
+.preview-simple .pv-title{width:42%;background:color-mix(in srgb,var(--accent) 52%,var(--panel))}
+.preview-simple i:not(.pv-title){border-radius:2px}
+.preview-orbit{grid-template-columns:1.15fr .85fr;grid-template-rows:1fr 1fr 1fr}
+.preview-orbit b{grid-row:1/4;border-radius:50%;background:transparent;border:7px solid color-mix(in srgb,var(--accent) 46%,var(--panel));display:grid;place-items:center}
+.preview-orbit b em{width:34%;height:34%;border:1px solid color-mix(in srgb,var(--accent) 65%,var(--line));border-radius:50%}
+.preview-orbit i{border-radius:999px}
+.preview-command{grid-template-columns:1.6fr 1fr 1fr;grid-template-rows:1fr 1fr}
+.preview-command i{border-radius:2px}
+.preview-command i:first-child{grid-row:1/3;background:color-mix(in srgb,var(--accent) 35%,var(--panel))}
+.preview-journal{grid-template-columns:14px 1fr;grid-template-rows:repeat(3,1fr);gap:7px 9px}
+.preview-journal b{width:5px;height:5px;border-radius:50%;align-self:start;justify-self:center;margin-top:7px;background:var(--accent);box-shadow:0 16px 0 color-mix(in srgb,var(--accent) 40%,var(--panel))}
+.preview-journal i{position:relative;border-radius:2px}
+.preview-journal i:after{content:"";position:absolute;left:-17px;top:7px;bottom:-16px;width:1px;background:var(--line)}
+.preview-journal i:last-child:after{display:none}
+.preview-matrix{grid-template-columns:1.35fr 1fr 1fr;grid-template-rows:1fr 1fr}
+.preview-matrix i{border-radius:5px}
+.preview-matrix i:first-child{grid-row:1/3;background:color-mix(in srgb,var(--accent) 37%,var(--panel))}
+.preview-matrix i:last-child{grid-column:2/4}
+.appearance-choice,.type-choice{display:grid;grid-template-columns:145px minmax(0,1fr) 28px;align-items:center;gap:16px;text-align:left;border:1px solid var(--line);border-radius:17px;background:var(--panel);color:var(--ink);padding:13px}
+.appearance-choice>span:nth-child(2),.type-choice>span:nth-child(2){display:grid;gap:4px}
+.appearance-choice strong,.type-choice strong{font-size:16px}.appearance-choice small,.type-choice small{color:var(--muted);line-height:1.35}
+.appearance-choice em,.type-choice em{font-style:normal;color:var(--accent);font-weight:850}
+.appearance-demo{height:78px;border-radius:11px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:6px;padding:10px;border:1px solid #ffffff1a}
+.appearance-demo i,.appearance-demo b{border-radius:6px}
+.appearance-demo i:first-child{grid-row:1/3}
+.appearance-light .appearance-demo{background:#eef2f7}.appearance-light .appearance-demo i,.appearance-light .appearance-demo b{background:#ffffff;border:1px solid #d7dfea}
+.appearance-dark .appearance-demo{background:#08111d}.appearance-dark .appearance-demo i,.appearance-dark .appearance-demo b{background:#142033;border:1px solid #27374d}
+.appearance-neon .appearance-demo{background:#02050a;box-shadow:inset 0 0 22px color-mix(in srgb,var(--accent) 12%,transparent)}
+.appearance-neon .appearance-demo i,.appearance-neon .appearance-demo b{background:#08121e;border:1px solid var(--accent);box-shadow:0 0 10px color-mix(in srgb,var(--accent) 48%,transparent)}
+.appearance-system .appearance-demo{background:linear-gradient(90deg,#edf2f7 0 50%,#07101a 50%)}.appearance-system .appearance-demo i,.appearance-system .appearance-demo b{background:color-mix(in srgb,var(--accent) 30%,transparent);border:1px solid #ffffff40}
+.palette-choice-large{display:grid;grid-template-columns:120px minmax(0,1fr) 28px;align-items:center;gap:14px;width:100%;border:1px solid var(--line);background:var(--panel);color:var(--ink);padding:13px;border-radius:16px;text-align:left}
+.palette-choice-large .swatches{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.palette-choice-large .swatches i{height:38px;width:auto}
+.palette-choice-large>span:nth-child(2){display:grid;gap:3px}.palette-choice-large small{color:var(--muted);line-height:1.3}.palette-choice-large em{font-style:normal;color:var(--accent);font-weight:850}
+.custom-palette-form{margin-top:6px}
+.type-sample{height:72px;border-radius:11px;background:var(--panel2);display:grid;place-items:center;font-size:31px;font-weight:760;color:var(--accent)}
+.type-technical .type-sample{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.04em}
+.type-editorial .type-sample{font-family:Georgia,Cambria,serif;font-weight:600}
+.type-minimal .type-sample{font-size:24px;font-weight:500}
+.type-display .type-sample{font-family:"Trebuchet MS",sans-serif;font-weight:850;letter-spacing:-.06em}
+.preset-card-large{display:grid;grid-template-columns:minmax(0,1fr) 100px auto;gap:14px;align-items:center}
+.preset-card-large .swatches{justify-self:end}.preset-card-large .actions{justify-self:end}
+.style-form-foot{padding-top:14px}
+
+/* The selected bottom item should be visible, not a giant filled blob. */
+html[data-layout=orbit] .bottom button.active{background:transparent;box-shadow:none;border-radius:9px;position:relative}
+html[data-layout=orbit] .bottom button.active:before{content:"";position:absolute;top:1px;width:28px;height:3px;border-radius:999px;background:var(--accent)}
+html[data-theme=neon] .style-value-row:hover,
+html[data-theme=neon] .layout-choice-large.active,
+html[data-theme=neon] .appearance-choice.active,
+html[data-theme=neon] .palette-choice-large.active,
+html[data-theme=neon] .type-choice.active{box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 55%,transparent),0 0 24px color-mix(in srgb,var(--accent) 16%,transparent)}
+html[data-theme=neon] .style-preview-card{border-color:color-mix(in srgb,var(--accent) 34%,var(--line));box-shadow:0 0 32px color-mix(in srgb,var(--accent) 10%,transparent)}
+
+/* Settings tabs should be an intentional control, not a sentence that escapes
+   off the right edge of a phone. */
+.settings-tabs{max-width:100%;overflow:hidden}
+.settings-tabs button{min-width:0}
+
+/* Portrait phone */
+@media(max-width:700px){
+ .settings-tabs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;overflow:visible;padding:4px;position:static}
+ .settings-tabs button{width:100%;padding:8px 5px;font-size:11px;white-space:normal;line-height:1.15;text-align:center}
+ .style-screen-head h2{font-size:23px}
+ .style-preview-card{grid-template-columns:112px minmax(0,1fr);gap:12px;padding:13px;border-radius:18px}
+ .style-preview-visual{height:92px;border-radius:13px}.style-preview-copy h3{font-size:20px}
+ .style-preview-copy p{font-size:11px;line-height:1.35}
+ .style-menu{padding:2px 14px;border-radius:17px}
+ .style-value-row{padding:14px 0;gap:10px}.style-value-row strong{font-size:14px}.style-value-row small{font-size:10px}
+ .style-row-value{font-size:11px;max-width:42%}
+ .layout-choice-large{grid-template-columns:118px minmax(0,1fr) 24px;gap:11px;min-height:126px;padding:10px;border-radius:16px}
+ .layout-preview{height:102px;padding:9px}.layout-choice-copy strong{font-size:16px}.layout-choice-copy small{font-size:11px;line-height:1.32}
+ .appearance-choice,.type-choice{grid-template-columns:92px minmax(0,1fr) 23px;gap:10px;padding:10px}
+ .appearance-demo,.type-sample{height:65px}
+ .appearance-choice strong,.type-choice strong{font-size:14px}.appearance-choice small,.type-choice small{font-size:10px}
+ .palette-choice-large{grid-template-columns:82px minmax(0,1fr) 22px;gap:10px;padding:10px}
+ .palette-choice-large .swatches i{height:31px}.palette-choice-large strong{font-size:14px}.palette-choice-large small{font-size:10px}
+ .preset-card-large{grid-template-columns:minmax(0,1fr);gap:9px}.preset-card-large .swatches,.preset-card-large .actions{justify-self:start}
+ .preset-picker-list{grid-template-columns:1fr}
+ .category-colours{grid-template-columns:1fr}
+ .style-inline-actions .btn{flex:1}
+ .colour-editor{grid-template-columns:1fr 1fr}
+}
+
+/* Narrowest phones */
+@media(max-width:390px){
+ .style-preview-card{grid-template-columns:1fr}.style-preview-visual{height:104px}
+ .layout-choice-large{grid-template-columns:104px minmax(0,1fr);position:relative}
+ .layout-choice-large .choice-check{position:absolute;right:8px;top:8px}
+ .layout-choice-copy{padding-right:20px}
+ .appearance-choice,.type-choice{grid-template-columns:78px minmax(0,1fr);position:relative}
+ .appearance-choice>em,.type-choice>em{position:absolute;right:10px;top:9px}
+ .appearance-choice>span:nth-child(2),.type-choice>span:nth-child(2){padding-right:18px}
+ .colour-editor{grid-template-columns:1fr}
+}
+
+/* A phone held sideways is still a phone. Width-only breakpoints were causing
+   SAMT to suddenly grow a desktop sidebar in landscape. */
+@media (max-height:600px) and (pointer:coarse){
+ .side{display:none!important}
+ .shell{display:block;max-width:none}
+ .main{padding:env(safe-area-inset-top) 17px calc(82px + env(safe-area-inset-bottom));width:100%;max-width:none!important}
+ .top{height:66px}
+ .top h1{font-size:22px}
+ .bottom{display:flex!important;position:fixed;bottom:0;left:0;right:0;z-index:20;background:var(--nav);border-top:1px solid var(--line);padding:4px max(9px,env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(9px,env(safe-area-inset-left));justify-content:space-around}
+ .bottom button{width:auto;flex:1;min-width:0;display:grid;justify-items:center;gap:1px;padding:4px 2px;font-size:9px;border-radius:9px;text-align:center}
+ .bottom .ico{font-size:18px}
+ .settings-tabs{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));position:static;overflow:visible}
+ .settings-tabs button{min-width:0;padding:7px 4px;font-size:10px;white-space:normal}
+ .style-overview,.style-subpage{max-width:100%}
+ .style-preview-card{grid-template-columns:150px minmax(0,1fr);padding:12px}.style-preview-visual{height:92px}
+ .layout-picker-list{grid-template-columns:repeat(2,minmax(0,1fr));display:grid}
+ .layout-choice-large{grid-template-columns:118px minmax(0,1fr) 22px;min-height:118px;padding:9px}
+ .layout-preview{height:94px;padding:8px}
+ .appearance-picker,.type-picker,.palette-picker-list{grid-template-columns:repeat(2,minmax(0,1fr))}
+ .appearance-choice,.type-choice{grid-template-columns:80px minmax(0,1fr) 20px;padding:8px}
+ .appearance-demo,.type-sample{height:58px}
+ .palette-choice-large{grid-template-columns:70px minmax(0,1fr) 18px;padding:8px}
+ .palette-choice-large .swatches i{height:27px}
+ .preset-picker-list{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
