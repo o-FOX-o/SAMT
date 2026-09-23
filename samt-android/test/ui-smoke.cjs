@@ -41,8 +41,12 @@ async function connect(){
   await capture('ui-preview.png');
 
   await evaluate('document.querySelector(".bottom [data-route=settings]").click()');
+  await until('document.querySelector(".style-overview") !== null');
+  assert.equal(await evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1'),true,'Style overview must not overflow portrait');
+  assert.equal(await evaluate('document.querySelectorAll(".settings-tabs button").length'),6);
+
+  await evaluate('document.querySelector("[data-action=style-panel][data-id=layout]").click()');
   await until('document.querySelectorAll("[data-action=set-layout]").length === 5');
-  assert.equal(await evaluate('document.querySelectorAll("[data-action=set-palette]").length >= 10'),true);
   for(const layout of ['simple','command','journal','matrix','orbit']){
     await evaluate(`document.querySelector('[data-action=set-layout][data-id=${layout}]').click()`);
     await until(`document.documentElement.dataset.layout === "${layout}"`);
@@ -50,12 +54,29 @@ async function connect(){
     await until(`document.querySelector('.home-${layout}') !== null`);
     await capture(`ui-layout-${layout}.png`);
     await evaluate('document.querySelector(".bottom [data-route=settings]").click()');
+    await until('document.querySelector(".style-overview") !== null');
+    await evaluate('document.querySelector("[data-action=style-panel][data-id=layout]").click()');
     await until('document.querySelectorAll("[data-action=set-layout]").length === 5');
   }
+  await evaluate('document.querySelector("[data-action=style-back]").click()');
+  await until('document.querySelector(".style-overview") !== null');
+  await evaluate('document.querySelector("[data-action=style-panel][data-id=palette]").click()');
+  await until('document.querySelectorAll("[data-action=set-palette]").length >= 10');
   await evaluate('document.querySelector("[data-action=set-palette][data-id=ocean]").click()');
   await until('getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() === "#1976a3"');
   await evaluate('document.querySelector("[data-action=set-palette][data-id=samt]").click()');
   await until('getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() === "#147d86"');
+
+  // A sideways phone must retain the phone shell instead of becoming the desktop sidebar.
+  await send('Emulation.setDeviceMetricsOverride',{width:915,height:412,deviceScaleFactor:1,mobile:true});
+  await pause(150);
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".side")).display'),'none');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector(".bottom")).display'),'flex');
+  assert.equal(await evaluate('document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1'),true,'landscape phone must not overflow horizontally');
+  await capture('ui-landscape-style.png');
+  await send('Emulation.setDeviceMetricsOverride',{width:412,height:915,deviceScaleFactor:1,mobile:true});
+  await pause(150);
+
   await evaluate('document.querySelector("[data-settings=build]").click()');
   await until('!!document.querySelector("[data-action=starter][data-id=religion]")');
   await evaluate('document.querySelector("[data-action=starter][data-id=religion]").click()');
