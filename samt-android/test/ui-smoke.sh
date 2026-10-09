@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 browser="$(command -v google-chrome || command -v chromium || command -v chromium-browser)"
-python3 -m http.server 8765 --bind 127.0.0.1 --directory web >/tmp/samt-http.log 2>&1 &
+python3 -m http.server 8765 --bind 127.0.0.1 --directory "${SAMT_WEB_DIRECTORY:-web}" >/tmp/samt-http.log 2>&1 &
 server_pid=$!
 profile="$(mktemp -d)"
 browser_pid=''

@@ -1,1 +1,13 @@
-{"name":"samt-android","private":true,"version":"0.1.0","type":"module","scripts":{"test":"node test/engine.test.js"}}
+{
+  "name": "samt-android",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "test": "node test/runtime-compat.test.cjs && node test/engine.test.js",
+    "build:web": "node scripts/build-web.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10"
+  }
+}

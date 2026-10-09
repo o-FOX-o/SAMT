@@ -1,12 +1,13 @@
 import {TYPES,RESULT_TYPES,emptyState,validate,execute,reconcile,periodBounds,localKey,overview,actionAnalysis,home,alarmRequests,backup,importBackup,definitionImpact,dataClearImpact} from './engine.js';
 import {LAYOUTS,TYPOGRAPHIES,PALETTES,FULL_PRESETS,visualSettings,resolvedAppearance,applyVisual,presetFromSettings,parseStylePreset} from './visual.js';
+import {cloneData} from './clone.js';
 
 const KEY='samt.android.v3';const root=document.getElementById('app');
 const H=(value)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const date=(v)=>v?new Date(v).toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—';
 const inputDateTime=(value=Date.now())=>{const x=new Date(value),pad=n=>String(n).padStart(2,'0');return `${x.getFullYear()}-${pad(x.getMonth()+1)}-${pad(x.getDate())}T${pad(x.getHours())}:${pad(x.getMinutes())}`;};
 const short=(v)=>v?new Date(v).toLocaleDateString('en-GB',{day:'numeric',month:'short',year:'numeric'}):'—';
-const title=s=>s.replaceAll('_',' ').replace(/\b\w/g,x=>x.toUpperCase());
+const title=s=>s.replace(/_/g,' ').replace(/\b\w/g,x=>x.toUpperCase());
 const csvNumbers=value=>{const raw=String(value??'').trim();return raw?raw.split(',').map(x=>Number(x.trim())).filter(Number.isFinite):[];};
 const names={home:'Today',actions:'Actions',blocks:'Blocks',log:'Quick log',activity:'History & analysis',settings:'Settings'};
 const nav=[['home','home','Today'],['actions','actions','Actions'],['blocks','blocks','Blocks'],['activity','activity','Activity'],['settings','settings','Settings']];
@@ -32,7 +33,7 @@ function show(message,kind='good'){
   element.textContent=message;element.dataset.kind=kind;
   const current=toast;setTimeout(()=>{if(toast===current){toast=null;document.querySelector('.toast')?.remove();}},3600);
 }
-function navigate(to,chosen=null){route=to;detail=chosen;modal=null;render();window.scrollTo({top:0,behavior:'instant'});}
+function navigate(to,chosen=null){route=to;detail=chosen;modal=null;render();window.scrollTo({top:0,behavior:'auto'});}
 function closeEditorModal(){
  if(modal?.kind==='result'&&actionReturn){const draft=actionReturn;actionEditor(draft.id?state.actions.find(x=>x.id===draft.id):null);draftResults=draft.results;const restored=document.querySelector('#editor');for(const [name,v] of Object.entries(draft.values)){const el=restored.elements.namedItem(name);if(el){if(el.type==='checkbox')el.checked=!!v;else el.value=v;}}document.querySelector('#result-list').innerHTML=resultDraftHtml();actionReturn=null;return;}
  modal=null;render();
@@ -266,7 +267,7 @@ function openClearData(){
  open('clear-data','Clear selected tracked data',`<p class="small">Definitions are managed above. Choose factual/runtime collections carefully; SAMT previews counts and creates a restore point before committing.</p><div class="grid compact">${choices.map(([key,label])=>check(label,`clear_${key}`,false)).join('')}</div><div class="form-grid">${select('Date range','dateMode',[['all','All time'],['before','Before date']],'all')}${field('Before','cutoff','','date')}</div>`,'Preview changes');
 }
 
-function actionEditor(action=null){draftResults=action?structuredClone(action.resultFields):[];const tags=state.tags.map(tag=>check(tag.name,`tag_${tag.id}`,action?.tagIds?.includes(tag.id))).join(''),avoid=action?.avoid||{};
+function actionEditor(action=null){draftResults=action?cloneData(action.resultFields):[];const tags=state.tags.map(tag=>check(tag.name,`tag_${tag.id}`,action?.tagIds?.includes(tag.id))).join(''),avoid=action?.avoid||{};
  open('action',action?'Edit Action':'New Action',`${field('Name','name',action?.name||'')}${field('Description','description',action?.description||'','textarea')}<div class="form-grid">${select('Direction','direction',[['Do','Do'],['Avoid','Avoid / limit']],action?.direction||'Do')}${select('Completion','completion',[['quantity','Quantity'],['time','Time']],action?.completion?.type||'quantity')}</div><div class="form-grid">${field('Quantity target','target',action?.completion?.target??1,'number')}${field('Minimum minutes','minutes',action?.completion?.minimumMinutes??0,'number')}</div><div class="config-panel" data-action-directions="Avoid"><h3>Avoid / limit rule</h3><p class="small">Log only when the unwanted action happens. A period with no violation succeeds automatically.</p><div class="form-grid">${select('Review period','avoidPeriod',[['daily','Daily'],['weekly','Weekly'],['monthly','Monthly'],['yearly','Yearly']],avoid.period||'daily')}${field('Allowed amount per period','avoidLimit',avoid.limit??0,'number','Use 0 for a strict do-not-do rule.')}</div></div><div class="field"><label>Tags</label><div class="pill-row">${tags||'<span class="small muted">Create Tags in Settings → Build.</span>'}</div></div><div class="separator"></div><div class="card-heading"><h2>Results (${draftResults.length}/10)</h2>${btn('+ Result','add-result','','tiny')}</div><div id="result-list">${resultDraftHtml()}</div>`,action?'Save Action':'Create Action',{id:action?.id});toggleActionFields();}
 function resultDraftHtml(){return draftResults.map((r,i)=>`<div class="row"><div class="row-main"><strong>${H(r.label)}</strong><small>${H(title(r.type))} · ${r.required?'Required':'Optional'}${r.allowedValues?.length?` · ${H(r.allowedValues.join(' / '))}`:''}${r.zeroMeansMissed?' · 0 records Missed':''}</small></div>${btn('Remove','remove-result',`data-index="${i}"`,'tiny danger')}</div>`).join('')||'<p class="small">Optional fields let you record scores, measurements and other results on each log.</p>';}
 function toggleActionFields(){const form=document.querySelector('form[data-form=action]');if(!form)return;const direction=form.elements.direction.value;for(const panel of form.querySelectorAll('[data-action-directions]'))panel.hidden=!panel.dataset.actionDirections.split(' ').includes(direction);}
@@ -345,7 +346,7 @@ function modalFor(action,node){const id=node.dataset.id,blockId=node.dataset.blo
  case 'new-categories':open('category','New Category',`${field('Name','name')}${field('Colour','color','#1d9a84','color')}`,'Create');break;
  case 'new-tags':open('tag','New Tag',`${field('Name','name')}${select('Category','categoryId',state.categories.map(c=>[c.id,c.name]),state.categories[0]?.id)}`,'Create');break;
  case 'new-units':open('unit','New Unit',`${field('Name','name')}${field('Symbol','symbol')}${field('Dimension (e.g. mass, distance)','dimension')}`,'Create');break;
- case 'add-result':if(draftResults.length<10){actionReturn={values:formObject(document.querySelector('#editor')),id:modal.data.id,results:structuredClone(draftResults)};open('result','Add a Result field',`${field('Label','label')}${select('Type','type',RESULT_TYPES.map(t=>[t,title(t)]),'score')}${check('Required','required',false)}<div class="form-grid">${field('Minimum','minimum',0,'number')}${field('Maximum','maximum',10,'number')}</div>${field('Allowed numeric values','allowedValues','','text','Optional, comma separated — for example 0, 3, 10')}${check('A score of 0 records this Action as Missed','zeroMeansMissed',false)}${select('Unit','unitId',[['','None'],...state.units.map(u=>[u.id,`${u.name} (${u.symbol||''})`])],'')}${field('Choice options (comma separated)','options','')}`,'Add field');}break;
+ case 'add-result':if(draftResults.length<10){actionReturn={values:formObject(document.querySelector('#editor')),id:modal.data.id,results:cloneData(draftResults)};open('result','Add a Result field',`${field('Label','label')}${select('Type','type',RESULT_TYPES.map(t=>[t,title(t)]),'score')}${check('Required','required',false)}<div class="form-grid">${field('Minimum','minimum',0,'number')}${field('Maximum','maximum',10,'number')}</div>${field('Allowed numeric values','allowedValues','','text','Optional, comma separated — for example 0, 3, 10')}${check('A score of 0 records this Action as Missed','zeroMeansMissed',false)}${select('Unit','unitId',[['','None'],...state.units.map(u=>[u.id,`${u.name} (${u.symbol||''})`])],'')}${field('Choice options (comma separated)','options','')}`,'Add field');}break;
  default:break;
 }}
 function formObject(form){const data=new FormData(form),obj=Object.fromEntries(data.entries());for(const el of form.querySelectorAll('input[type=checkbox]'))obj[el.name]=el.checked;return obj;}
@@ -382,7 +383,7 @@ function submit(form){const m=modal;if(!m)return;const d=formObject(form);let va
  }
  case 'action':{
    const tags=Object.entries(d).filter(([k,v])=>k.startsWith('tag_')&&v).map(([k])=>k.slice(4));
-   const data={name:d.name.trim(),description:d.description.trim(),direction:d.direction,completion:d.completion==='time'?{type:'time',minimumMinutes:Number(d.minutes)||0}:{type:'quantity',target:Number(d.target)||1},avoid:d.direction==='Avoid'?{period:d.avoidPeriod||'daily',limit:Math.max(0,Number(d.avoidLimit)||0),mode:'binary_limit'}:null,resultFields:structuredClone(draftResults),tagIds:tags};
+   const data={name:d.name.trim(),description:d.description.trim(),direction:d.direction,completion:d.completion==='time'?{type:'time',minimumMinutes:Number(d.minutes)||0}:{type:'quantity',target:Number(d.target)||1},avoid:d.direction==='Avoid'?{period:d.avoidPeriod||'daily',limit:Math.max(0,Number(d.avoidLimit)||0),mode:'binary_limit'}:null,resultFields:cloneData(draftResults),tagIds:tags};
    value=m.data.id?command('EDIT_DEFINITION',{kind:'actions',id:m.data.id,changes:data}):command('ADD_DEFINITION',{kind:'actions',data});break;
  }
  case 'block':{
@@ -451,8 +452,8 @@ function submit(form){const m=modal;if(!m)return;const d=formObject(form);let va
  if(value){modal=null;render();show('Saved.');}
 }
 function exportFile(){const content=backup(state,Date.now()),name=`SAMT-backup-${localKey(Date.now(),state.settings.timezone)}.json`;downloadJson(name,content);}
-function snapshotForRestore(s){return structuredClone({...s,restorePoints:[]});}
-function restorePoint(reason){return {id:`restore_${crypto.randomUUID()}`,at:new Date().toISOString(),reason,state:snapshotForRestore(state)};}
+function snapshotForRestore(s){return cloneData({...s,restorePoints:[]});}
+function restorePoint(reason){return {id:`restore_${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`,at:new Date().toISOString(),reason,state:snapshotForRestore(state)};}
 function applyImport(text){const incoming=importBackup(text);incoming.restorePoints.push(restorePoint('before import'));validate(incoming);state=incoming;recovery=null;save();show('Backup imported.');}
 function applyIncoming(text){const parsed=JSON.parse(text);if(parsed?.format==='samt-style-preset'){applyStylePreset(parsed);return;}applyImport(text);}
 async function importFile(file){try{applyIncoming(await file.text());}catch(e){show(`Import cancelled: ${e.message}`,'bad');}}
@@ -517,7 +518,7 @@ root.addEventListener('click',e=>{const node=e.target.closest('[data-route],[dat
  if(a==='restore-point'){state.restorePoints.push(restorePoint('manual'));save();show('Restore point saved.');return;}
  if(a==='use-restore-point'){
    const point=state.restorePoints.find(p=>p.id===id);if(!point||!confirm(`Restore SAMT as it was on ${date(point.at)}? Current data will be kept as a restore point.`))return;
-   try{const candidate=structuredClone(point.state);validate(candidate);const prior=restorePoint('before restore');candidate.restorePoints=[...state.restorePoints,prior];state=candidate;save();show('Restore point applied.');}catch(error){show(error.message,'bad');}return;
+   try{const candidate=cloneData(point.state);validate(candidate);const prior=restorePoint('before restore');candidate.restorePoints=[...state.restorePoints,prior];state=candidate;save();show('Restore point applied.');}catch(error){show(error.message,'bad');}return;
  }
  if(a==='empty-bin'){openBinBulk('delete',true);return;}
  if(a==='clear-everything'){if(confirm('Clear all SAMT data on this phone? Export a backup first if you need this history later.')&&confirm('This removes Actions, Blocks, Logs and History. Continue?')){const prior=restorePoint('before clearing everything');state=emptyState();state.restorePoints.push(prior);save();show('SAMT is empty. Your previous data is available as a restore point.');}return;}

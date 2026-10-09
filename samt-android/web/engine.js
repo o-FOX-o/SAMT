@@ -1,10 +1,11 @@
 /* SAMT's domain rules have no DOM, Android or storage dependency. All commands
    receive an explicit instant so tests and background reconciliation agree. */
+import {cloneData as copy} from './clone.js';
 export const TYPES = ['collection','action_list','routine','workflow','project','cycle','target'];
 export const RESULT_TYPES = ['percentage','score','measurement','text','choice'];
 export const SCHEDULE_MODES = ['manual','once','daily','weekly','monthly','yearly','interval','specific_dates'];
 export const VERSION = 3;
-const copy = value => structuredClone(value);
+const lastItem = items => items[items.length - 1];
 const id = prefix => `${prefix}_${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`;
 const insist = (condition, message) => { if (!condition) throw new Error(message); };
 const iso = instant => new Date(instant).toISOString();
@@ -288,7 +289,7 @@ function projectConditionResult(s,run,condition,at,children) {
       return {id:condition.id||'percentage',type,reached:actual>=target,actual,target,error:null};
     }
     if(type==='target') {
-      const period=s.periods.filter(p=>p.blockId===condition.targetBlockId&&p.start<=now&&p.end>run.startedAt).sort((a,b)=>a.start.localeCompare(b.start)).at(-1);
+      const period=lastItem(s.periods.filter(p=>p.blockId===condition.targetBlockId&&p.start<=now&&p.end>run.startedAt).sort((a,b)=>a.start.localeCompare(b.start)));
       if(!period)return {id:condition.id||'target',type,reached:false,actual:null,error:'Target has no evaluated period yet.'};
       const target=condition.value==null?Number(period.target)||0:Number(condition.value),operator=condition.operator||'>=',actual=Number(period.actual)||0;
       return {id:condition.id||'target',type,reached:compareValue(actual,operator,target),actual,target,operator,periodId:period.id,error:null};
@@ -297,7 +298,7 @@ function projectConditionResult(s,run,condition,at,children) {
       const values=s.actionLogs.filter(l=>l.actionId===condition.actionId&&l.at>=run.startedAt&&l.at<=now).map(l=>l.results?.[condition.resultId])
         .map(v=>Number(v?.value??v)).filter(Number.isFinite);
       if(!values.length)return {id:condition.id||'result',type,reached:false,actual:null,error:null};
-      const aggregate=condition.aggregate||'latest';let actual=values.at(-1);
+      const aggregate=condition.aggregate||'latest';let actual=lastItem(values);
       if(aggregate==='sum')actual=values.reduce((n,x)=>n+x,0);if(aggregate==='average')actual=values.reduce((n,x)=>n+x,0)/values.length;if(aggregate==='min')actual=Math.min(...values);if(aggregate==='max')actual=Math.max(...values);
       const target=Number(condition.value),operator=condition.operator||'>=';
       return {id:condition.id||'result',type,reached:compareValue(actual,operator,target),actual,target,operator,aggregate,error:null};
@@ -399,7 +400,7 @@ function reconcileRoutines(s,at) {
     const cadence=activation.schedule?.period||block.config?.period||'manual';
     if(!['daily','weekly'].includes(cadence))continue;
     const current=periodBounds(cadence,at,s.settings),start=activation.startedAt||iso(at);
-    let last=s.runs.filter(r=>r.activationId===activation.id).sort((a,b)=>a.startedAt.localeCompare(b.startedAt)).at(-1);
+    let last=lastItem(s.runs.filter(r=>r.activationId===activation.id).sort((a,b)=>a.startedAt.localeCompare(b.startedAt)));
     if(!last) {const begin=periodBounds(cadence,start,s.settings);last=createRun(s,block,at,begin,cadence);}
     let guard=0;
     while(last.deadlineAt&&last.deadlineAt<=iso(at)&&guard++<740) {
@@ -482,8 +483,8 @@ function reconcileOccurrences(s,at,horizonDays=14) {
         const action=byId(s,'actions',entry.refId);
         if(!action||action.status==='ARCHIVED')continue;
       }
-      const earliest=[entry.activeFrom,entry.createdAt,activation?.startedAt,s.meta?.occurrenceFloorAt].filter(Boolean).map(x=>localKey(x,zone)).sort().at(-1)||today;
-      const last=s.occurrences.filter(o=>o.entryId===entry.id&&o.status!=='SUPERSEDED').sort((a,b)=>a.dueAt.localeCompare(b.dueAt)).at(-1);
+      const earliest=lastItem([entry.activeFrom,entry.createdAt,activation?.startedAt,s.meta?.occurrenceFloorAt].filter(Boolean).map(x=>localKey(x,zone)).sort())||today;
+      const last=lastItem(s.occurrences.filter(o=>o.entryId===entry.id&&o.status!=='SUPERSEDED').sort((a,b)=>a.dueAt.localeCompare(b.dueAt)));
       const from=last?dayShift(localKey(last.dueAt,zone),-1):earliest;
       const minDay=dayShift(today,-739);
       const start=from>minDay?from:minDay;
@@ -520,7 +521,7 @@ function targetActual(s,block,bounds) {
 }
 function reconcilePeriods(s,at) {
   for(const block of s.blocks.filter(b=>b.type==='target'&&b.status!=='ARCHIVED'&&s.activations.some(a=>a.blockId===b.id&&a.status==='ACTIVE'))) {
-    const cadence=block.config?.period||'daily';let p=s.periods.filter(p=>p.blockId===block.id).sort((a,b)=>a.start.localeCompare(b.start)).at(-1);
+    const cadence=block.config?.period||'daily';let p=lastItem(s.periods.filter(p=>p.blockId===block.id).sort((a,b)=>a.start.localeCompare(b.start)));
     if(!p) {const b=periodBounds(cadence,at,s.settings);p={id:id('period'),blockId:block.id,blockSnapshot:copy(block),start:b.start,end:b.end,status:'OPEN',actual:0,target:Number(block.config?.target)||0};s.periods.push(p);}
     let guard=0;while(p.end<=iso(at)&&guard++<740) {
       p.actual=targetActual(s,p.blockSnapshot,{start:p.start,end:p.end,excludedIntervals:p.excludedIntervals||[]});p.status=p.actual>=p.target?'REACHED':'MISSED';p.closedAt=p.end;
@@ -538,7 +539,7 @@ function avoidValue(s,action,start,end) {
 function reconcileAvoid(s,at) {
   for(const action of s.actions.filter(a=>a.direction==='Avoid'&&a.status!=='ARCHIVED')) {
     const cfg=action.avoid||{mode:'binary_limit',limit:0,period:'daily'},cadence=cfg.period||'daily';
-    let period=s.periods.filter(p=>p.kind==='avoid'&&p.actionId===action.id).sort((a,b)=>a.start.localeCompare(b.start)).at(-1);
+    let period=lastItem(s.periods.filter(p=>p.kind==='avoid'&&p.actionId===action.id).sort((a,b)=>a.start.localeCompare(b.start)));
     if(!period) {
       const b=periodBounds(cadence,at,s.settings);
       period={id:id('period'),kind:'avoid',actionId:action.id,actionSnapshot:copy(action),start:b.start,end:b.end,status:'OPEN',actual:0,limit:Number(cfg.limit)||0};
@@ -589,7 +590,7 @@ function resumeActivation(s,activation,at) {
     run.transitions.push({id:id('transition'),event:'RUN_RESUMED',at:resumeAt,pauseDurationMinutes:duration/60000});
   }
   if(block?.type==='target') {
-    const period=s.periods.filter(p=>p.blockId===block.id).sort((a,b)=>a.start.localeCompare(b.start)).at(-1);
+    const period=lastItem(s.periods.filter(p=>p.blockId===block.id).sort((a,b)=>a.start.localeCompare(b.start)));
     if(period?.status==='OPEN') {
       if(period.end<=resumeAt) {
         period.actual=targetActual(s,period.blockSnapshot,{start:period.start,end:pausedAt,excludedIntervals:period.excludedIntervals||[]});
@@ -986,7 +987,7 @@ export function execute(input,command,at) {
         for(const o of s.occurrences)if(removed.has(o.actionLogId))o.actionLogId=null;
         for(const run of s.runs)for(const child of run.children||[]) {
           child.actionLogIds=(child.actionLogIds||[]).filter(x=>!removed.has(x));
-          if(removed.has(child.actionLogId))child.actionLogId=child.actionLogIds.at(-1)||null;
+          if(removed.has(child.actionLogId))child.actionLogId=lastItem(child.actionLogIds)||null;
         }
       }
       for(const category of ['runs','occurrences','periods','cycles','reviews','history'])if(selected.has(category))
@@ -1086,7 +1087,7 @@ export function execute(input,command,at) {
 }
 export function actionAnalysis(s,actionId) {
   const logs=s.actionLogs.filter(l=>l.actionId===actionId);
-  return {logs:logs.length,minutes:logs.reduce((n,x)=>n+(x.durationMinutes||0),0),quantity:logs.reduce((n,x)=>n+(x.quantity||0),0),last:logs.at(-1)||null};
+  return {logs:logs.length,minutes:logs.reduce((n,x)=>n+(x.durationMinutes||0),0),quantity:logs.reduce((n,x)=>n+(x.quantity||0),0),last:lastItem(logs)||null};
 }
 export function overview(s) {
   const ids=new Set();let minutes=0;

@@ -30,8 +30,14 @@ as a `samt-style-preset` JSON file and imported again.
 
 ## Build
 
-Use Android Studio with JDK 17 and Android SDK 35, or run
-`./gradlew :app:assembleRelease`. GitHub Actions runs the engine regression
+Install Node.js 18 or newer with npm, JDK 17 and Android SDK 35. Run `npm install`
+once in this directory, then use Android Studio or run
+`./gradlew :app:assembleRelease`. Gradle bundles the web interface into a classic
+script targeting Chromium 58 and packages it from `app/build/generated/samt-web`.
+This avoids module loading and unsupported JavaScript syntax in older Android
+WebViews; the source files in `web/` still run directly in a modern browser.
+`npm run build:web` builds these packaged assets independently.
+GitHub Actions runs the engine regression
 suite, mobile UI smoke tests and signed preview APK build. Minimum Android
 version is 8.0 (API 26).
 
@@ -40,7 +46,8 @@ earlier preview without uninstalling it and losing phone-local data. The
 checked-in key is deliberately only for personal preview builds; a private
 production key is required before public release.
 
-Run the domain checks with `npm test` or `node test/engine.test.js`.
+Run the runtime compatibility and domain checks with `npm test`, or run only the
+domain checks with `node test/engine.test.js`.
 
 ## Data
 

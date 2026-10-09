@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {emptyState,execute,reconcile,periodBounds,home,overview,backup,importBackup,validate,alarmRequests,definitionImpact,dataClearImpact} from '../web/engine.js';
+import {emptyState,execute,reconcile,periodBounds,home,overview,backup,importBackup,validate,alarmRequests,definitionImpact,dataClearImpact,actionAnalysis} from '../web/engine.js';
 import {LAYOUTS,TYPOGRAPHIES,PALETTES,FULL_PRESETS,visualSettings,resolvedAppearance,applyVisual,presetFromSettings,parseStylePreset,contrast} from '../web/visual.js';
 
 const at=(s)=>Date.parse(s);
@@ -429,4 +429,39 @@ assert.throws(()=>parseStylePreset(JSON.stringify({...exportedStyle,palette:{...
 assert.equal(visualSettings({visual:{layout:'journal',paletteId:'paper-does-not-exist',palette:{...PALETTES.sand}}}).layout,'journal');
 assert.equal(visualSettings({appearance:'light',accent:'#112233'}).palette.primary,'#112233','legacy accent survives the visual-system upgrade');
 
-console.log('PASS: domain contract plus five-layout visual engine, palette derivation, contrast safety and style preset round trip');
+// Older supported WebViews must open both empty data and a saved active Routine.
+const cloneDescriptor=Object.getOwnPropertyDescriptor(globalThis,'structuredClone');
+const atDescriptor=Object.getOwnPropertyDescriptor(Array.prototype,'at');
+try{
+  Object.defineProperty(globalThis,'structuredClone',{value:undefined,configurable:true,writable:true});
+  Object.defineProperty(Array.prototype,'at',{value:undefined,configurable:true,writable:true});
+  let compatible=emptyState();
+  assert.deepEqual(reconcile(compatible,at(t0)),compatible,'fresh startup works without modern cloning APIs');
+  let created=issue(compatible,'ADD_DEFINITION',t0,{kind:'actions',data:{name:'Original action',resultFields:[{id:'compat_score',label:'Score',type:'score',unitId:undefined}]}});
+  compatible=created.state;const compatibleAction=created.value;
+  assert.ok(Object.prototype.hasOwnProperty.call(compatibleAction.resultFields[0],'unitId'),'optional undefined fields survive in-memory commands');
+  created=issue(compatible,'ADD_DEFINITION',t0,{kind:'blocks',data:{name:'Saved daily Routine',type:'routine',config:{period:'daily'}}});
+  compatible=created.state;const compatibleRoutine=created.value;
+  compatible=issue(compatible,'ADD_RELATIONSHIP',t0,{blockId:compatibleRoutine.id,kind:'Action',refId:compatibleAction.id}).state;
+  compatible=issue(compatible,'ACTIVATE',t0,{blockId:compatibleRoutine.id,schedule:{period:'daily'}}).state;
+  compatible=issue(compatible,'LOG_ACTION',t0,{actionId:compatibleAction.id,quantity:1,results:{compat_score:8}}).state;
+  compatible=issue(compatible,'EDIT_DEFINITION',t0,{kind:'actions',id:compatibleAction.id,changes:{name:'Edited action'}}).state;
+  const savedCompatible=importBackup(backup(compatible,at(t0)));
+  const reopened=reconcile(savedCompatible,at('2026-03-28T13:00:00Z'));
+  assert.equal(reopened.runs.length,1,'reopening keeps the existing daily Run');
+  assert.equal(reopened.runs[0].children[0].status,'DONE');
+  assert.equal(reopened.runs[0].children[0].definitionSnapshot.name,'Original action');
+  assert.equal(reopened.actions[0].name,'Edited action');
+  assert.deepEqual(reopened.actionLogs,savedCompatible.actionLogs,'reopening preserves factual Logs');
+  assert.deepEqual(reopened.history,savedCompatible.history,'reopening preserves History');
+  assert.notEqual(reopened.runs[0],savedCompatible.runs[0],'reconciliation leaves the loaded state independent');
+  assert.equal(actionAnalysis(reopened,compatibleAction.id).last.actionSnapshot.name,'Original action');
+  const compatibleStyle=parseStylePreset(exportedStyle);
+  compatibleStyle.palette.primary='#000000';
+  assert.equal(exportedStyle.palette.primary,parsedStyle.palette.primary,'object style imports keep their source independent');
+}finally{
+  if(cloneDescriptor)Object.defineProperty(globalThis,'structuredClone',cloneDescriptor);else delete globalThis.structuredClone;
+  if(atDescriptor)Object.defineProperty(Array.prototype,'at',atDescriptor);else delete Array.prototype.at;
+}
+
+console.log('PASS: domain contract, five-layout visual engine and fresh/saved startup without structuredClone or Array.at');

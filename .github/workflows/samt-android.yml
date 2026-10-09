@@ -2,6 +2,8 @@ name: SAMT Android preview
 on:
   push:
     branches: [android-redesign]
+  pull_request:
+    branches: [android-redesign]
   workflow_dispatch:
 
 jobs:
@@ -16,11 +18,20 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Install web build tools
+        run: npm install --no-audit --no-fund
+        working-directory: samt-android
       - name: Check engine behavior
-        run: node samt-android/test/engine.test.js
+        run: npm test
+        working-directory: samt-android
+      - name: Bundle interface for older WebViews
+        run: npm run build:web
+        working-directory: samt-android
       - name: Check mobile interface
         run: bash test/ui-smoke.sh
         working-directory: samt-android
+        env:
+          SAMT_WEB_DIRECTORY: app/build/generated/samt-web
       - name: Build signed Android preview
         run: gradle :app:assembleRelease
         working-directory: samt-android
@@ -41,3 +52,38 @@ jobs:
             samt-android/ui-starters.png
             samt-android/ui-data.png
             samt-android/ui-dark.png
+
+  android-launch:
+    name: Launch signed APK (API ${{ matrix.api-level }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        api-level: [26, 35]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: samt-android-preview
+          path: samt-android/apk
+      - name: Enable emulator acceleration
+        run: sudo chmod 666 /dev/kvm
+      - name: Install and launch preview
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ matrix.api-level }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash samt-android/test/android-launch.sh samt-android/apk/app-release.apk samt-android/android-launch-results
+      - name: Preserve Android launch diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-launch-api-${{ matrix.api-level }}
+          path: samt-android/android-launch-results
+          if-no-files-found: warn

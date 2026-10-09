@@ -1,3 +1,5 @@
+import {cloneData} from './clone.js';
+
 export const LAYOUTS=[
   {id:'simple',name:'Simple',description:'Flat, quiet and dense. Minimal decoration, direct lists and progress.'},
   {id:'orbit',name:'Orbit',description:'SAMT signature layout. Bearings, rings, arcs and cyclic progress.'},
@@ -152,7 +154,7 @@ export function presetFromSettings(settings={},categoryColors={}){
 }
 
 export function parseStylePreset(text){
-  const data=typeof text==='string'?JSON.parse(text):structuredClone(text);
+  const data=typeof text==='string'?JSON.parse(text):cloneData(text);
   if(data?.format!=='samt-style-preset'||data.version!==1)throw new Error('Unsupported SAMT style preset.');
   if(!LAYOUTS.some(x=>x.id===data.layout))throw new Error('Unknown layout in style preset.');
   if(!TYPOGRAPHIES.some(x=>x.id===data.typography))throw new Error('Unknown typography in style preset.');

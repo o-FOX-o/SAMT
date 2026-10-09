@@ -33,9 +33,22 @@ async function connect(){
     fs.writeFileSync(file,Buffer.from(result.data,'base64'));
   };
   await send('Page.enable');await send('Runtime.enable');
+  // Run the real UI without APIs absent from Chromium 80–97 WebViews.
+  await send('Page.addScriptToEvaluateOnNewDocument',{source:`
+    delete window.structuredClone;
+    delete Array.prototype.at;
+    delete String.prototype.replaceAll;
+    if (${!!process.env.SAMT_WEB_DIRECTORY}) {
+      delete window.globalThis;
+      delete Object.fromEntries;
+      delete Array.prototype.flat;
+      delete Array.prototype.flatMap;
+    }
+  `});
   await send('Emulation.setDeviceMetricsOverride',{width:412,height:915,deviceScaleFactor:1,mobile:true});
   await send('Page.navigate',{url:'http://127.0.0.1:8765/index.html'});
   await until('document.querySelector("h1")?.textContent === "Today"');
+  assert.deepEqual(await evaluate('[typeof structuredClone,typeof Array.prototype.at,typeof String.prototype.replaceAll]'),['undefined','undefined','undefined']);
   assert.equal(await evaluate('document.querySelector(".bearing-panel h2")?.textContent'),'Make the first move');
   assert.equal(await evaluate('document.documentElement.dataset.layout'),'orbit');
   await capture('ui-preview.png');
@@ -159,6 +172,19 @@ async function connect(){
   await evaluate('document.querySelector("[data-action=theme]").click()');
   await until('document.documentElement.dataset.theme === "dark"');
   await capture('ui-dark.png');
+  const beforeReopen=await evaluate('JSON.parse(localStorage.getItem("samt.android.v3"))');
+  await send('Page.reload');
+  await until('document.querySelector("h1")?.textContent === "Today"');
+  assert.deepEqual(await evaluate('[typeof structuredClone,typeof Array.prototype.at,typeof String.prototype.replaceAll]'),['undefined','undefined','undefined']);
+  const afterReopen=await evaluate('JSON.parse(localStorage.getItem("samt.android.v3"))');
+  assert.deepEqual(afterReopen.actionLogs,beforeReopen.actionLogs,'reopening active Routines preserves factual Logs');
+  assert.deepEqual(afterReopen.history,beforeReopen.history,'reopening preserves History');
+  for(const prior of beforeReopen.runs){
+    const reopened=afterReopen.runs.find(run=>run.id===prior.id);
+    assert.ok(reopened,'saved Run survives reopening');
+    assert.deepEqual(reopened.blockSnapshot,prior.blockSnapshot);
+    assert.deepEqual(reopened.children.map(child=>child.definitionSnapshot),prior.children.map(child=>child.definitionSnapshot));
+  }
   socket.close();
-  console.log('PASS: visual layouts/palettes, mobile Today, prayer starter, active Runs, Project editor, Data Manager, backup import, and Dark mode');
+  console.log('PASS: mobile UI, visual settings, active Runs, Project editor and saved-state startup without structuredClone, Array.at or String.replaceAll');
 })().catch(e=>{console.error(e);process.exit(1);});
