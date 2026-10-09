@@ -1,7 +1,7 @@
 name: SAMT Android preview
 on:
   push:
-    branches: [android-redesign, fix/android-startup]
+    branches: [android-redesign]
   pull_request:
     branches: [android-redesign]
   workflow_dispatch:

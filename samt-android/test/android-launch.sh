@@ -31,6 +31,7 @@ capture() {
     timeout 10s adb exec-out screencap -p > "$artifacts/screen.png" 2>/dev/null
     if [[ $result -ne 0 ]]; then
         echo "Launch diagnostics: $artifacts" >&2
+        grep -E -A 30 'FATAL EXCEPTION|Process: app\.samt\.android|chromium.*(ERROR|Uncaught)|WebViewFactory' "$artifacts/logcat.txt" >&2 || true
         tail -n 100 "$artifacts/logcat.txt" >&2
     fi
     exit "$result"
