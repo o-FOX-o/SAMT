@@ -44,7 +44,8 @@ timeout 60s adb install -r "$apk" > "$artifacts/install.txt" 2>&1
 device shell am force-stop "$package"
 device shell input keyevent KEYCODE_WAKEUP
 device shell wm dismiss-keyguard >/dev/null 2>&1 || true
-device logcat -c
+# Older emulator images can refuse log-buffer clearing; it is optional.
+device logcat -c >/dev/null 2>&1 || true
 timeout 45s adb shell am start -W -n "$activity" > "$artifacts/start.txt" 2>&1
 if grep -Eq 'Error:|Exception|Status: timeout' "$artifacts/start.txt"; then
     cat "$artifacts/start.txt" >&2
