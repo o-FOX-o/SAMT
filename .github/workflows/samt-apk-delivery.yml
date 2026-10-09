@@ -1,0 +1,33 @@
+name: Export verified SAMT APK
+on:
+  push:
+    branches: [delivery/samt-apk-0.3.79]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  export-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download the verified 0.3.79 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: samt-android-preview
+          run-id: 37971132362
+          github-token: ${{ github.token }}
+          path: verified-apk
+      - name: Export APK bytes and integrity hash
+        shell: python
+        run: |
+          import base64, hashlib, pathlib
+          files = list(pathlib.Path("verified-apk").rglob("*.apk"))
+          assert len(files) == 1, files
+          data = files[0].read_bytes()
+          assert 0 < len(data) < 10_000_000
+          encoded = base64.b64encode(data).decode("ascii")
+          print("SAMT_APK_SIZE=" + str(len(data)), flush=True)
+          print("SAMT_APK_SHA256=" + hashlib.sha256(data).hexdigest(), flush=True)
+          for index, offset in enumerate(range(0, len(encoded), 49152)):
+              print("SAMT_APK_CHUNK " + str(index) + " " + encoded[offset:offset+49152], flush=True)
+          print("SAMT_APK_COMPLETE", flush=True)
