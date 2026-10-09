@@ -33,7 +33,7 @@ function show(message,kind='good'){
   element.textContent=message;element.dataset.kind=kind;
   const current=toast;setTimeout(()=>{if(toast===current){toast=null;document.querySelector('.toast')?.remove();}},3600);
 }
-function navigate(to,chosen=null){route=to;detail=chosen;modal=null;render();window.scrollTo({top:0,behavior:'instant'});}
+function navigate(to,chosen=null){route=to;detail=chosen;modal=null;render();window.scrollTo({top:0,behavior:'auto'});}
 function closeEditorModal(){
  if(modal?.kind==='result'&&actionReturn){const draft=actionReturn;actionEditor(draft.id?state.actions.find(x=>x.id===draft.id):null);draftResults=draft.results;const restored=document.querySelector('#editor');for(const [name,v] of Object.entries(draft.values)){const el=restored.elements.namedItem(name);if(el){if(el.type==='checkbox')el.checked=!!v;else el.value=v;}}document.querySelector('#result-list').innerHTML=resultDraftHtml();actionReturn=null;return;}
  modal=null;render();
@@ -453,7 +453,7 @@ function submit(form){const m=modal;if(!m)return;const d=formObject(form);let va
 }
 function exportFile(){const content=backup(state,Date.now()),name=`SAMT-backup-${localKey(Date.now(),state.settings.timezone)}.json`;downloadJson(name,content);}
 function snapshotForRestore(s){return cloneData({...s,restorePoints:[]});}
-function restorePoint(reason){return {id:`restore_${crypto.randomUUID()}`,at:new Date().toISOString(),reason,state:snapshotForRestore(state)};}
+function restorePoint(reason){return {id:`restore_${globalThis.crypto?.randomUUID?.() || Math.random().toString(36).slice(2)}`,at:new Date().toISOString(),reason,state:snapshotForRestore(state)};}
 function applyImport(text){const incoming=importBackup(text);incoming.restorePoints.push(restorePoint('before import'));validate(incoming);state=incoming;recovery=null;save();show('Backup imported.');}
 function applyIncoming(text){const parsed=JSON.parse(text);if(parsed?.format==='samt-style-preset'){applyStylePreset(parsed);return;}applyImport(text);}
 async function importFile(file){try{applyIncoming(await file.text());}catch(e){show(`Import cancelled: ${e.message}`,'bad');}}

@@ -3,6 +3,15 @@ plugins {
 }
 
 def previewBuild = (System.getenv('SAMT_BUILD_NUMBER') ?: '0').toInteger()
+def generatedWebAssets = layout.buildDirectory.dir('generated/samt-web')
+def bundleWeb = tasks.register('bundleWeb', Exec) {
+    workingDir rootProject.projectDir
+    commandLine((System.getProperty('os.name').toLowerCase().contains('windows') ? 'npm.cmd' : 'npm'), 'run', 'build:web')
+    inputs.dir rootProject.file('web')
+    inputs.file rootProject.file('scripts/build-web.mjs')
+    inputs.file rootProject.file('package.json')
+    outputs.dir generatedWebAssets
+}
 
 android {
     namespace 'app.samt.android'
@@ -41,8 +50,12 @@ android {
     }
 
     sourceSets {
-        main.assets.srcDirs += ['../web']
+        main.assets.srcDirs += [generatedWebAssets.get().asFile]
     }
+}
+
+tasks.named('preBuild').configure {
+    dependsOn bundleWeb
 }
 
 dependencies {

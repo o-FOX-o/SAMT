@@ -38,6 +38,12 @@ async function connect(){
     delete window.structuredClone;
     delete Array.prototype.at;
     delete String.prototype.replaceAll;
+    if (${!!process.env.SAMT_WEB_DIRECTORY}) {
+      delete window.globalThis;
+      delete Object.fromEntries;
+      delete Array.prototype.flat;
+      delete Array.prototype.flatMap;
+    }
   `});
   await send('Emulation.setDeviceMetricsOverride',{width:412,height:915,deviceScaleFactor:1,mobile:true});
   await send('Page.navigate',{url:'http://127.0.0.1:8765/index.html'});
